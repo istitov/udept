@@ -1,0 +1,7 @@
+.DS_Store
+*.backup
+*.diff
+*.orig
+*.patch
+*.swp
+autom4te.cache/
