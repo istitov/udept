@@ -1142,6 +1142,8 @@ function package_use_mask() {
 function usecomponent() {
 	# return a USE component, one flag per line, highest priority first
 	# TODO FIXME not correct yet - though OK for default case
+	# Added placeholders for default USE flag implementation
+	# See http://bugs.gentoo.org/show_bug.cgi?id=61732
 	local component="$1" cpv="$2"
 	case "$component" in
 		env) sed 's/[[:space:]]\+/\n/g' <<<"$USE" | tac;;
@@ -1151,8 +1153,13 @@ function usecomponent() {
 				dep_satisfies "$cpv" $package && echo $use
 			done | sed 's/[[:space:]]\+/\n/g';;
 		conf) sed 's/[[:space:]]\+/\n/g' <<<"$__conf_USE";;
+		pkgprofile);;
 		auto) autouse;;
 		defaults);;
+		pkginternal);;
+		env.d);;
+		pkginternal) [[ "$cpv" ]] && pkginternal_use_for "$cpv";;
+		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' /etc/profile.env;;
 		*) format_error <<<"Unknown USE component: $component" >&2;;
 	esac
 }
