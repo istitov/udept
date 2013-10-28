@@ -1,8 +1,8 @@
 #!/bin/bash
 # vim:set ts=4 sw=4:
 #
-# Copyright (c) 2004-2007 Ed Catmur <ed@catmur.co.uk>
-# This program is licensed under the terms of the GPL version 3.
+# Copyright (c) 2004-2006 Ed Catmur <ed@catmur.co.uk>
+# This program is licensed under the terms of the GPL version 2.
 #
 # Parts inspired by qpkg, copyright (c) gentoo.org
 # It is believed all code copyright gentoo.org has been replaced by my own
@@ -164,7 +164,7 @@ function print_help() {
 	cat <<END
 
 $PROG is copyright Ed Catmur <ed@catmur.co.uk> and contributors. Distributed
-under the terms of the GNU General Public License version 3. NO WARRANTY given.
+under the terms of the GNU General Public License version 2. NO WARRANTY given.
 END
 }
 
@@ -474,7 +474,7 @@ trap 'exit 1' SIGINT
 # A Portage library written in bash, for bash scripts.
 # Designed to be lightweight yet full-featured.
 # Copyright (c) 2004 Ed Catmur <ed@catmur.co.uk>
-# Licensed under the GPL, version 3 or later.
+# Licensed under the GPL, version 2 or later.
 
 # Conventions:
 # Whenever you see "mlsr" that means a full version specifier:
@@ -589,22 +589,12 @@ function memoise() {
 	}"
 }
 
-shopt -s extdebug
-function backtrace() {
-	for (( j=${BASH_ARGC[0]}, i=1; i < ${#FUNCNAME[@]}; j+=${BASH_ARGC[$i]}, ++i )); do
-		args=""; for (( k=${BASH_ARGC[$i]}-1; k >= 0; --k )); do
-			args="$args \"${BASH_ARGV[$j + $k]}\""
-		done
-		echo "${Rd}$i)${NO} ${BASH_SOURCE[$i]##*/}:${BASH_LINENO[$i-1]}	${FUNCNAME[$i]}$args" >&2
-	done
-}
-
 # Version specifier: 
 # 	(cvs.)?([[:digit:]]+.)*[[:digit:]]+[[:lower:]]?(_(alpha|beta|pre|rc|p)[[:digit:]]*)?(-r[[:digit:]]+)?
 # as: 	(cvs.)(...,mega,macro),major,(minor,micro,nano,...),(letter),(status(number)),(ebuild revision) 
 # e.g. 3.57.2.20030722c_beta37-r12
-VER_SHPAT='?(cvs.)*(+([[:digit:]]).)+([[:digit:]])?([[:lower:]])*(_@(alpha|beta|pre|rc|p)*([[:digit:]]))?(-r+([[:digit:]]))'
-VER_REGEXP='\(cvs\.\)\?\([[:digit:]]\+\.\)*[[:digit:]]\+[[:lower:]]\?\(_\(alpha\|beta\|pre\|rc\|p\)[[:digit:]]*\)*\(-r[[:digit:]]\+\)\?'
+VER_SHPAT='?(cvs.)*(+([[:digit:]]).)+([[:digit:]])?([[:lower:]])?(_@(alpha|beta|pre|rc|p)*([[:digit:]]))?(-r+([[:digit:]]))'
+VER_REGEXP='\(cvs\.\)\?\([[:digit:]]\+\.\)*[[:digit:]]\+[[:lower:]]\?\(_\(alpha\|beta\|pre\|rc\|p\)[[:digit:]]*\)\?\(-r[[:digit:]]\+\)\?'
 
 function format_cpv() {
 	cpv="$1"; cat="${cpv%/*}"; pv="${cpv#$cat/}"; pn="${pv/%-$VER_SHPAT}"
@@ -761,8 +751,7 @@ function shlex_parse_assignments() {
 			eval "$name=\"$value\""
 		fi
 	done < <(sed -n -e '/^[[:space:]]*[[:alnum:]_]\+=/ {
-			s/^\([^=]\+\)=\([^"#]\+\)\([[:space:]]*#.*\)\?/\1 \2/ ; ta;
-			s/^\([^=]\+\)="\([^"]\+\).*"\([[:space:]]*#.*\)\?/\1 \2/ ; ta;
+			s/^\([^=]\+\)=\("\?\)\([^"]\+\).*\2/\1 \3/ ; ta ;
 			s/^\([^=]\+\)="\?/\1 / ; {
 				:b ; N ; s/".*// ; tc ; bb ; :c ; s/\\\?\n/ /g
 			} ;
@@ -925,9 +914,7 @@ function accept_for() {
 	extra_ks=()
 	while read -a atom_keywords; do
 		if dep_satisfies ${cp}-${mlsr} "${atom_keywords[0]}"; then
-			[[ -z "${atom_keywords[*]:1}" ]] \
-				&& extra_ks=("${extra_ks[@]}" "~${ARCH}") \
-				|| extra_ks=("${extra_ks[@]}" "${atom_keywords[@]:1}")
+			extra_ks=("${extra_ks[@]}" "${atom_keywords[@]:1}")
 		fi
 	done <<<"$(
 		grep '^[<>=~]*'$cp -r /etc/portage/package.keywords 2>/dev/null
@@ -1014,7 +1001,9 @@ function extract_var_from_edb() {
 }
 
 function extract_var() {
-	local name="$1" cpv="$2" tree="$3"
+	name="$1"
+	cpv="$2"
+	tree="$3"
 	if [[ "$opt_arg_original_depends" && -d /var/db/pkg/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
 	elif [[ -f /var/cache/edb/dep/$tree/$cpv ]]; then
@@ -1043,18 +1032,6 @@ function provide_for() {
 
 function slot_for() {
 	extract_var SLOT $1 $2
-}
-
-function pkginternal_use_for() {
-	local -a IUSE; read -a IUSE <<<"$(extract_var IUSE $1)"
-	for (( i=0; i<${#IUSE[@]}; ++i )); do
-		local flag=${IUSE[$i]}
-		if [[ "$flag" == +* ]]; then
-			echo "${flag:1}"
-		elif [[ "$flag" == -* ]]; then
-			echo "$flag"
-		fi
-	done
 }
 
 function contingent_provide_for() {
@@ -1192,7 +1169,7 @@ function dbuse() {
 	if [[ "$cpv" && "$opt_arg_original_depends" && -d /var/db/pkg/$cpv ]]; then
 		sed -e 's/[[:space:]]\+/\n/g' /var/db/pkg/$cpv/USE
 	else
-		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults:pkginternal:env.d"
+		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults"
 		(
 			echo $ARCH
 			package_use_mask "$cpv" | sed -e 's/^/-/'
@@ -1238,20 +1215,23 @@ function comm_ver() {
 	local s1_mlsr="$1" s2_mlsr="$2"
 	[[ "$s1_mlsr" == "$s2_mlsr" ]] && return 0
 	if [[ "$s1_mlsr" == */* || "$s2_mlsr" == */* ]]; then
-		echo "Oops: comm_ver called with category/package: $s1_mlsr $s2_mlsr" | format_error >&2
-		backtrace
+		echo "Oops: comm_ver called with category/package: $(format_cpv $s1_mlsr) $(format_cpv $s2_mlsr)" | format_error >&2
 		return 0
 	fi
 	s1_mls="${s1_mlsr/%-r+([[:digit:]])}"; s1_r="${s1_mlsr#${s1_mls}}"
 	s1_r="${s1_r/#-r*(0)}"
-	s1_ml="${s1_mls%%*(_@(alpha|beta|pre|rc|p)*([[:digit:]]))}"
-	s1_ss="${s1_mls#${s1_ml}}"
-	s1_m="${s1_ml/%[[:lower:]]}"; s1_l="${s1_ml#${s1_m}}"; s1_m=( ${s1_m//./ } )
+	s1_ml="${s1_mls/%_@(alpha|beta|pre|rc|p)*([[:digit:]])}"
+	s1_s="${s1_mls#${s1_ml}}"; s1_sc="${s1_s/%*([[:digit:]])}"
+	s1_scn="$((6-${#s1_sc}))"; [[ $s1_scn -ge 4 ]] && s1_scn=$((10-$s1_scn))
+	s1_sn="${s1_s##${s1_sc}*(0)}"; s1_m="${s1_ml/%[[:lower:]]}"
+	s1_l="${s1_ml#${s1_m}}"; s1_m=( ${s1_m//./ } )
 	s2_mls="${s2_mlsr/%-r+([[:digit:]])}"; s2_r="${s2_mlsr#${s2_mls}}"
 	s2_r="${s2_r/#-r*(0)}"
-	s2_ml="${s2_mls%%*(_@(alpha|beta|pre|rc|p)*([[:digit:]]))}"
-	s2_ss="${s2_mls#${s2_ml}}"
-	s2_m="${s2_ml/%[[:lower:]]}"; s2_l="${s2_ml#${s2_m}}"; s2_m=( ${s2_m//./ } )
+	s2_ml="${s2_mls/%_@(alpha|beta|pre|rc|p)*([[:digit:]])}"
+	s2_s="${s2_mls#${s2_ml}}"; s2_sc="${s2_s/%*([[:digit:]])}"
+	s2_scn="$((6-${#s2_sc}))"; [[ $s2_scn -ge 4 ]] && s2_scn=$((10-$s2_scn))
+	s2_sn="${s2_s##${s2_sc}*(0)}"; s2_m="${s2_ml/%[[:lower:]]}"
+	s2_l="${s2_ml#${s2_m}}"; s2_m=( ${s2_m//./ } )
 	local i
 	for ((i=0; i<${#s1_m[@]} || i<${#s2_m[@]}; ++i)); do
 		s1mi="${s1_m[$i]}"; s2mi="${s2_m[$i]}"
@@ -1267,19 +1247,10 @@ function comm_ver() {
 	((${#s1_m[@]}!=${#s2_m[@]})) && [[ "${s1_l}${s1_s}${s1_r}" == "${s2_l}${s2_s}${s2_r}" ]] && return 0
 	[[ "$s1_l" < "$s2_l" ]] && return -4
 	[[ "$s1_l" > "$s2_l" ]] && return 4
-	s1_ss=( ${s1_ss//_/ } ); s2_ss=( ${s2_ss//_/ } )
-	for ((i=0; i<${#s1_ss[@]} || i<${#s2_ss[@]}; ++i)); do
-		s1si="${s1_ss[$i]}"; s2si="${s2_ss[$i]}"
-		s1sci="${s1si/%*([[:digit:]])}"; s2sci="${s2si/%*([[:digit:]])}"
-		s1_scn="$((6-${#s1sci}))"; [[ $s1_scn -ge 4 ]] && s1_scn=$((10-$s1_scn))
-		s2_scn="$((6-${#s2sci}))"; [[ $s2_scn -ge 4 ]] && s2_scn=$((10-$s2_scn))
-		[[ "$s1_scn" < "$s2_scn" ]] && return -3
-		[[ "$s1_scn" > "$s2_scn" ]] && return 3
-		s1_sn="${s1si##${s1sci}*(0)}"
-		s2_sn="${s2si##${s2sci}*(0)}"
-		[[ "$s1_sn" -lt "$s2_sn" ]] && return -2
-		[[ "$s1_sn" -gt "$s2_sn" ]] && return 2
-	done
+	[[ "$s1_scn" < "$s2_scn" ]] && return -3
+	[[ "$s1_scn" > "$s2_scn" ]] && return 3
+	[[ "$s1_sn" -lt "$s2_sn" ]] && return -2
+	[[ "$s1_sn" -gt "$s2_sn" ]] && return 2
 	[[ "${s1_r}" -lt "${s2_r}" ]] && return -1
 	[[ "${s1_r}" -gt "${s2_r}" ]] && return 1
 	echo "Error! comm_ver failed $1 $2" >&2
@@ -1698,7 +1669,6 @@ function db_grep() {
 			grep -r --exclude '*.pickle' --exclude '*.cpickle' -l "${needle}" . \
 			| while read cpv; do
 				[[ -e "${tree}/${cpv%-${VER_SHPAT}}/${cpv##*/}.ebuild" ]] \
-					|| [[ -d /var/db/pkg/${cpv} ]] \
 					|| continue
 				[[ "$with_tree" ]] && echo "${cpv:2} ${tree}" || echo "${cpv:2}"
 			done
@@ -1709,6 +1679,8 @@ function db_grep() {
 			find /var/db/pkg -mindepth 2 -maxdepth 2 -printf '%P\n' \
 			| xargs grep -l "${needle}" 2>/dev/null \
 			| while read cpv; do
+				[[ -e "${tree}/${cpv%-${VER_SHPAT}}/${cpv#*/}.ebuild" ]] \
+					|| continue
 				[[ "$with_tree" ]] && echo "${cpv} ${tree}" || echo "$cpv"
 			done
 		done | { [[ "$with_tree" ]] && cat || sort -u; }
@@ -1716,7 +1688,9 @@ function db_grep() {
 }
 
 function potential_revdepends() {
-	local needle="$1" exclude="$2" excl_sed="\!^$" excl
+	needle="$1"
+	exclude="$2"
+	excl_sed="\!^$"
 	for excl in $exclude; do
 		[[ "$excl" == =* ]] \
 		&& excl_sed="$excl_sed"'\|^'"${excl:1}"'$' \
@@ -1896,7 +1870,7 @@ function pv_to_cpv() {
 }
 
 function _resolve_depatom_inner_virtual() {
-	v_cp="${v_cpv%-$VER_SHPAT?(\*)}"; v_mlsr="${v_cpv#${v_cp}?(-)}"
+	v_cp="${v_cpv%-$VER_SHPAT?(\*)}"; v_mlsr="${v_cpv#${v_cp}-}"
 	provided_and_avail $v_cp "$installed_only" \
 	| while read t_mlsr; do
 		{ [[ -z "$v_mlsr" ]] || dep_satisfies_mlsr "$t_mlsr" "$vs" "$v_mlsr"; }\
@@ -3046,9 +3020,9 @@ function filter_etc_file() {
 	if ! [[ -e "$filename" ]]; then
 		return 0
 	elif [[ -d "$filename" ]]; then
-		while read -u 3 subfile; do
+		while read subfile; do
 			filter_etc_file "$subfile" "${filter[@]}"
-		done 3< <(find "$filename" -type f -readable)
+		done < <(find "$filename" -type f -readable)
 		return 0
 	fi
 	echo >&2
@@ -3196,12 +3170,6 @@ function package_keywords_filter() {
 	local my_keywords
 	keywords_for $cp-$mlsr "" my_keywords
 	has '*' "${my_keywords[@]}" && return 1
-	if [[ -z "${keywords[*]}" ]]; then
-		# atom only in package.keywords: is ~ARCH in keywords and not ARCH?
-		has "~${ARCH}" "${my_keywords[@]}" || return 1
-		has "${ARCH}" "${my_keywords[@]}" && return 1
-		return 0
-	fi
 	for keyword in "${keywords[@]}"; do 
 		case "$keyword" in
 		-\*) # -* in package.keywords: is -* in keywords and no other accept?
@@ -3327,7 +3295,7 @@ function ask_install_new_file() {
 	case $do_action in
 		pretend ) exit 0;;
 		ask ) while :; do
-			userquery "Install new $name?" Install GR Skip RD Diff BL Merge FC
+			userquery "Install new $name?" Yes GR No RD Diff BL Merge FC
 			case $? in
 				0 ) install_new_file "$new" "$target" && break;;
 				1 ) break;;
@@ -3384,7 +3352,7 @@ function inspect_patch_tree_check_arches() {
 }
 
 function inspect_patch_tree() {
-	local tree="$1" rm_command rmdir_command patchdir patches
+	local tree="$1" rm_command rmdir_command patchdir
 	if [[ -d "$tree/.svn" ]]; then
 		rm_command="svn rm"; rmdir_command="svn rm"
 	else
@@ -3396,11 +3364,7 @@ function inspect_patch_tree() {
 		local mlsrs=() mlsr_trees=() mlsr_slots=() mlsr_match=() mlsr_pmask=()
 		cdn=${patchdir#$tree/}; dn=${cdn##*/}
 		cp=${cdn%@(\[*\]|-${VER_SHPAT}?(?(.)\*))}; pn=${cp##*/}
-		patches=("$patchdir"/*)
-		if [[ ! -e "$patches" ]]; then
-			log_message 1 "$patchdir does not contain any patches"
-			echo "$rmdir_command '$patchdir'"
-		elif [[ "$cp" == "$cdn" ]]; then
+		if [[ "$cp" == "$cdn" ]]; then
 			log_message 1 "$cdn is a package name, retaining"
 		elif inspect_patch_tree_check_data_is_highest_patched; then
 			log_message 1 "$cdn matches $mlsr, highest version"
@@ -3489,7 +3453,7 @@ function inspect_overlay() {
 				continue
 			fi
 			log_message 1 "$cp-$mlsr best ${in_message}against \$PORTDIR"
-			keep_any="$mlsr"
+			keep_any="yes"
 		done
 		if [[ -d "$ebdir/.svn" ]]; then
 			rm_command="svn rm"; rmdir_command="svn rm"
@@ -3503,7 +3467,6 @@ function inspect_overlay() {
 			for mlsr in "${delete_mlsrs[@]}"; do
 				echo "$rm_command '$ebdir/$pn-$mlsr.ebuild' '$ebdir/files/digest-$pn-$mlsr'"
 			done
-			echo "ebuild '$ebdir/$pn-$keep_any.ebuild' manifest"
 		else
 			echo "$rmdir_command '$ebdir'"
 		fi
