@@ -150,7 +150,7 @@ function shopt_help() {
 INSTRUCTIONS="A package is unneeded if there is no installed package that depends on it. As a special case, the running kernel's sources are needed.
 A world file entry is redundant if there is another installed package that depends on it. When merging the new world file, the merging program used is sdiff(1). Your world file is located at $WORLD_FILE.
 Spring-clean will help find large sets of unneeded packages and orphaned circular dependency loops.
-Env vars - USE, ACCEPT_KEYWORDS, etc., can be used to override /etc/make.conf."
+Env vars - USE, ACCEPT_KEYWORDS, etc., can be used to override /etc/portage/make.conf."
 function print_help() {
 	echo
 	print_usage
@@ -791,9 +791,9 @@ ARCH="x86"
 	done <<<"$(
 		shlex_parse_assignments \
 			- <<<"$PORTAGE_SETTINGS_DEFAULTS" \
-			/etc/make.globals \
+			/usr/share/portage/config/make.globals \
 			$(profile_files make.defaults) \
-			/etc/make.conf
+			/etc/portage/make.conf
 		for x in $PORTAGE_VARS_EXPORT $USE_EXPAND; do
 			echo "$x" "${!x}"
 		done

@@ -82,8 +82,8 @@ Display installed and uninstalled packages that depend on python.
 .PP
 /var/db/pkg
 /var/cache/edb/dep
-/etc/make.conf
-/etc/make.profile
+/etc/portage/make.conf
+/etc/portage/make.profile
 .SH "SEE ALSO"
 .PP
 portage(5), equery(1)
