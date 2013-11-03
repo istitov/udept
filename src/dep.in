@@ -709,7 +709,7 @@ function format_revdep() {
 deplines=('' DEPEND RDEPEND SLOT SRC_URI RESTRICT HOMEPAGE LICENSE DESCRIPTION KEYWORDS INHERITED IUSE CDEPEND PDEPEND PROVIDE)
 for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 
-# New inheriting profiles work thus: /etc/make.profile is a symlink to a 
+# New inheriting profiles work thus: /etc/portage/make.profile is a symlink to a 
 # directory somewhere in $PORTDIR; this has a file "parent" which contains the
 # relative path to the parent profile. Follow until you run out of parents.
 # profile_files() returns a profile stack for the named file, highest precedence
@@ -738,6 +738,8 @@ function etc_portage_files() {
 		find "/etc/portage/$name" -type f -readable
 	elif [[ -r "/etc/portage/$name" ]]; then
 		echo "/etc/portage/$name"
+	elif [[ -r "/etc/portage/$name/*/*" ]]; then
+		echo "/etc/portage/$name/*/*"
 	fi
 }
 
@@ -748,6 +750,7 @@ function profile_files_extra() {
 	profile_files "$name"
 	for x in $portage_trees; do
 		[[ -r "${x%/}/profiles/$name" ]] && echo "${x%/}/profiles/$name"
+		[[ -r "${x%/}/profiles/$name/*/*" ]] && echo "${x%/}/profiles/$name/*/*"
 	done
 }
 
@@ -773,8 +776,8 @@ function shlex_parse_assignments() {
 }
 
 function load_portage_config() {
-	profile_stack="$(profile_stack_read /etc/portage/profile .
-		profile_stack_read /etc/make.profile .)"
+	[[ -h "/etc/portage/make.profile" ]] && profile_stack="$(profile_stack_read /etc/portage/profile .
+		profile_stack_read /etc/portage/make.profile .)"
 
 	# portage settings files are parsed with portage_util.getconfig, which 
 	# uses shlex.shlex. We could source the settings files, but that takes 
@@ -830,7 +833,7 @@ ARCH="x86"
 		| stacking_sort yes
 	)
 
-	usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask))
+	[[ -r "use.mask" ]] && usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask)) || usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask/*/*)) # FIXME TODO
 }
 
 function ebuild_dep_to_stdout() {
@@ -1153,8 +1156,15 @@ function autouse() {
 memoise autouse
 
 function package_use_mask() {
-	(
+	[[ -r "package.use.mask" ]] && (
+	# TODO FIXME
 		kill_comments_and_blanks $(profile_files package.use.mask) \
+		| while read package pusemask; do
+			dep_satisfies "$1" $package && echo $pusemask
+		done | sed 's/[[:space:]]\+/\n/g'
+		echo "$usemask_unstacked"
+	) | stacking_sort yes || (
+		kill_comments_and_blanks $(profile_files package.use.mask/*/*) \
 		| while read package pusemask; do
 			dep_satisfies "$1" $package && echo $pusemask
 		done | sed 's/[[:space:]]\+/\n/g'
@@ -1181,8 +1191,9 @@ function usecomponent() {
 		defaults);;
 		pkginternal);;
 		env.d);;
+		repo);;
 		pkginternal) [[ "$cpv" ]] && pkginternal_use_for "$cpv";;
-		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' /etc/profile.env;;
+		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' /etc/portage/profile.env;;
 		*) format_error <<<"Unknown USE component: $component" >&2;;
 	esac
 }
