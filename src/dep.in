@@ -1229,7 +1229,7 @@ function comm_float() {
 	for ((i=0;i<${#f1}||i<${#f2};++i)); do
 		d1=${f1:$i:1}; [[ "$d1" ]] || d1=0
 		d2=${f2:$i:1}; [[ "$d2" ]] || d2=0
-		((d1<d2)) && return -7; ((d1>d2)) && return 7
+		((d1<d2)) && return -- -7; ((d1>d2)) && return 7
 	done
 	return 0
 }
@@ -1266,17 +1266,17 @@ function comm_ver() {
 	local i
 	for ((i=0; i<${#s1_m[@]} || i<${#s2_m[@]}; ++i)); do
 		s1mi="${s1_m[$i]}"; s2mi="${s2_m[$i]}"
-		[[ "$s1mi" || "$s2mi" == '0' ]] || return -5
+		[[ "$s1mi" || "$s2mi" == '0' ]] || return -- -5
 		[[ "$s2mi" || "$s1mi" == '0' ]] || return 5
 		if [[ "$s1mi" == 0* || "$s2mi" == 0* ]]; then
 			comm_float "$s1mi" "$s2mi"; ret=$?; ((ret)) && return $ret
 		else
-			((s1mi < s2mi)) && return -6
+			((s1mi < s2mi)) && return -- -6
 			((s1mi > s2mi)) && return 6
 		fi
 	done
 	((${#s1_m[@]}!=${#s2_m[@]})) && [[ "${s1_l}${s1_s}${s1_r}" == "${s2_l}${s2_s}${s2_r}" ]] && return 0
-	[[ "$s1_l" < "$s2_l" ]] && return -4
+	[[ "$s1_l" < "$s2_l" ]] && return -- -4
 	[[ "$s1_l" > "$s2_l" ]] && return 4
 	s1_ss=( ${s1_ss//_/ } ); s2_ss=( ${s2_ss//_/ } )
 	for ((i=0; i<${#s1_ss[@]} || i<${#s2_ss[@]}; ++i)); do
@@ -1284,14 +1284,14 @@ function comm_ver() {
 		s1sci="${s1si/%*([[:digit:]])}"; s2sci="${s2si/%*([[:digit:]])}"
 		s1_scn="$((6-${#s1sci}))"; [[ $s1_scn -ge 4 ]] && s1_scn=$((10-$s1_scn))
 		s2_scn="$((6-${#s2sci}))"; [[ $s2_scn -ge 4 ]] && s2_scn=$((10-$s2_scn))
-		[[ "$s1_scn" < "$s2_scn" ]] && return -3
+		[[ "$s1_scn" < "$s2_scn" ]] && return -- -3
 		[[ "$s1_scn" > "$s2_scn" ]] && return 3
 		s1_sn="${s1si##${s1sci}*(0)}"
 		s2_sn="${s2si##${s2sci}*(0)}"
-		[[ "$s1_sn" -lt "$s2_sn" ]] && return -2
+		[[ "$s1_sn" -lt "$s2_sn" ]] && return -- -2
 		[[ "$s1_sn" -gt "$s2_sn" ]] && return 2
 	done
-	[[ "${s1_r}" -lt "${s2_r}" ]] && return -1
+	[[ "${s1_r}" -lt "${s2_r}" ]] && return -- -1
 	[[ "${s1_r}" -gt "${s2_r}" ]] && return 1
 	echo "Error! comm_ver failed $1 $2" >&2
 	exit 128	# should not reach here
