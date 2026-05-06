@@ -1,4 +1,4 @@
-AC_INIT(udept, 0.5.99.0.2.95)
+AC_INIT(udept, 0.5.99.0.2.96)
 AC_SUBST(PACKAGE_TAG, ["I Just Know It'll End Up Sounding Lame"])
 AM_INIT_AUTOMAKE([dist-bzip2])
 
