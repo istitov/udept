@@ -2738,6 +2738,38 @@ function canonicalize_path() {
 
 function info_action_owners() {
 	path="$(canonicalize_path "$1")"
+	local result
+	result="$(info_action_owners_match "$path")"
+	# /usr-merge: CONTENTS may record /bin/bash while the caller queries
+	# /usr/bin/bash (or vice versa) — those are hardlinks on a merged-/usr
+	# system, so realpath can't follow them. Fall back to the other side
+	# of the well-known usrmerge pairs. Also try the realpath in case the
+	# path was a symlink (the non-merged case).
+	if [[ -z "$result" && "$path" == /* ]]; then
+		local alt=""
+		case "$path" in
+		/usr/bin/*)	alt="/bin/${path#/usr/bin/}";;
+		/usr/sbin/*)	alt="/sbin/${path#/usr/sbin/}";;
+		/usr/lib/*)	alt="/lib/${path#/usr/lib/}";;
+		/usr/lib64/*)	alt="/lib64/${path#/usr/lib64/}";;
+		/bin/*)		alt="/usr/bin/${path#/bin/}";;
+		/sbin/*)	alt="/usr/sbin/${path#/sbin/}";;
+		/lib/*)		alt="/usr/lib/${path#/lib/}";;
+		/lib64/*)	alt="/usr/lib64/${path#/lib64/}";;
+		esac
+		[[ "$alt" ]] && result="$(info_action_owners_match "$alt")"
+		if [[ -z "$result" && -e "$path" ]]; then
+			local realpath_target
+			realpath_target="$(readlink -f "$path" 2>/dev/null)"
+			[[ "$realpath_target" && "$realpath_target" != "$path" ]] \
+				&& result="$(info_action_owners_match "$realpath_target")"
+		fi
+	fi
+	[[ "$result" ]] && printf '%s\n' "$result"
+}
+
+function info_action_owners_match() {
+	path="$1"
 	set_xterm_title "Finding owners of $path..."
 	if [[ "$path" == /* ]]; then
 		grep -lx "obj ${path%/} [[:xdigit:]]\+ [[:digit:]]\+\

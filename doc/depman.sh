@@ -81,7 +81,8 @@ Display installed and uninstalled packages that depend on python.
 .SH FILES
 .PP
 /var/db/pkg
-/var/cache/edb/dep
+<repo>/metadata/md5-cache
+/etc/portage/repos.conf
 /etc/portage/make.conf
 /etc/portage/make.profile
 .SH "SEE ALSO"
@@ -98,3 +99,4 @@ Copyright \\(co 2006 Ed Catmur.
 This is free software.  You may redistribute copies of it under the terms of
 the GNU General Public License <http://www\\&.gnu\\&.org/licenses/gpl\\&.html>.
 There is NO WARRANTY, to the extent permitted by law.
+END

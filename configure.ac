@@ -1,5 +1,5 @@
-AC_INIT(udept, 0.5.99.0.2.96)
-AC_SUBST(PACKAGE_TAG, ["I Just Know It'll End Up Sounding Lame"])
+AC_INIT(udept, 0.6.0)
+AC_SUBST(PACKAGE_TAG, ["The Treadmill Was Always Going To Win"])
 AM_INIT_AUTOMAKE([dist-bzip2])
 
 AC_ARG_ENABLE(bash-completion, AS_HELP_STRING([--disable-bash-completion], 
