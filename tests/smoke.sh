@@ -31,12 +31,17 @@ HEAD_LINES=30      # how many lines of output to embed verbatim per command
 CMD_TIMEOUT=120    # cap per-command wall time so a runaway dep walker
                    # doesn't stall the whole harness
 
+# run [-t N] LABEL ARGS...
+# -t overrides CMD_TIMEOUT for this single command (used for the slow
+# whole-system actions like --depclean).
 run() {
+	local timeout=$CMD_TIMEOUT
+	if [[ "$1" == "-t" ]]; then timeout=$2; shift 2; fi
 	local label="$1"; shift
 	local out rc lines hash
-	out=$(timeout "$CMD_TIMEOUT" "$DEP" --colour=no "$@" 2>&1)
+	out=$(timeout "$timeout" "$DEP" --colour=no "$@" 2>&1)
 	rc=$?
-	(( rc == 124 )) && out="${out}"$'\n[timed out after '$CMD_TIMEOUT's]'
+	(( rc == 124 )) && out="${out}"$'\n[timed out after '$timeout's]'
 	lines=$(printf '%s\n' "$out" | wc -l)
 	hash=$(printf '%s' "$out" | sha256sum | cut -c1-12)
 	printf '\n=== %s ===\n' "$label"
@@ -121,10 +126,14 @@ run 'exists/portage:bash'     -x "$PORTAGE" "$PN_BASH"
 run 'rev-exists/python:bash'  -X "$PN_PYTHON" "$PN_BASH"
 
 # --- Actions, all read-only / pretend -----------------------------------
-# Skipping --depclean here: it iterates the entire installed set, well past
-# the smoke-harness time budget. pruneworld already exercises the dep walker
-# on every world entry, which is enough to catch regressions.
-run 'pruneworld/pretend'         -wp
-run 'purge/pretend'              -Pp
-run 'filter-etc-portage'         -E --ask=no --pretend
-run 'overlay-clean/missing'      -O /tmp/udept-nonexistent-overlay-$$
+# `dep -dp` would shell out to emerge --pretend -C, whose runtime is
+# dominated by emerge's own dep graph walk (5+ minutes on a populated
+# system). Smoke-testing that mostly tests emerge. Drive the underlying
+# redundant() function directly via --exec instead — this is what the
+# action would feed to emerge, and exercises our crunch_depends/
+# _smartdep paths the same way.
+run 'pruneworld/pretend'                  -wp
+run 'purge/pretend'                       -Pp
+run -t 300 'depclean/redundant'           --exec 'redundant'
+run 'filter-etc-portage'                  -E --ask=no --pretend
+run 'overlay-clean/missing'               -O /tmp/udept-nonexistent-overlay-$$

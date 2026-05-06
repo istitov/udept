@@ -488,8 +488,9 @@ trap 'exit 1' SIGINT
 # needle is being sought (in a haystack, normally)
 
 temp_dir="$(mktemp -t -d dep.XXXXXXXX)" || exit 1
-trap "rm -r $temp_dir" EXIT
-trap "rm -r $temp_dir" TERM
+# rm -rf and 2>/dev/null so the second trap firing (EXIT after TERM)
+# doesn't print 'cannot remove' for an already-deleted directory.
+trap "rm -rf $temp_dir 2>/dev/null" EXIT TERM
 
 # A useful trick to stack e.g. USE flags
 # 0. Concatenate the lists, from highest to lowest priority (i.e. in reverse 
@@ -801,6 +802,13 @@ function read_repos_config() {
 	local section="" line k v n
 	local main_repo=""
 	declare -gA repo_loc=() repo_prio=()
+	if ! command -v portageq >/dev/null 2>&1; then
+		format_error >&2 <<-END
+		dep needs sys-apps/portage installed: portageq is missing from
+		\$PATH, so /etc/portage/repos.conf can't be read.
+		END
+		exit 1
+	fi
 	while IFS= read -r line; do
 		case "$line" in
 		\[*\])	section="${line#\[}"; section="${section%\]}";;
@@ -906,21 +914,20 @@ function dep_satisfies_mlsr() {
 }
 
 function dep_satisfies() {
-	testpkg="$1"
-	depatom="$2"
+	local testpkg="$1" depatom="$2"
 	# Drop USE-dep brackets ([foo,-bar,baz?]) and slot suffixes (:0, :=, :*) —
 	# we don't filter on them so the bare cat/pkg-version still names the right
-	# target.
+	# target. depatom is local so we don't disturb the caller's view.
 	while [[ "$depatom" == *\[*\]* ]]; do
 		depatom="${depatom%%\[*}${depatom#*\]}"
 	done
 	depatom="${depatom%%:*}"
-	t_cp="${testpkg/%-$VER_SHPAT}"
-	t_mlsr="${testpkg#${t_cp}-}"
-	d_cpv="${depatom/#@(<|<=|=|~|>=|>)}"
-	vs="${depatom%${d_cpv}}"
-	d_cp="${d_cpv/%-$VER_SHPAT?(\*)}"
-	d_mlsr="${d_cpv#${d_cp}-}"
+	local t_cp="${testpkg/%-$VER_SHPAT}"
+	local t_mlsr="${testpkg#${t_cp}-}"
+	local d_cpv="${depatom/#@(<|<=|=|~|>=|>)}"
+	local vs="${depatom%${d_cpv}}"
+	local d_cp="${d_cpv/%-$VER_SHPAT?(\*)}"
+	local d_mlsr="${d_cpv#${d_cp}-}"
 	# doesn't dereference virtuals
 	[[ "$t_cp" != "$d_cp" ]] && return 2
 	dep_satisfies_mlsr "$t_mlsr" "$vs" "$d_mlsr"
@@ -1051,6 +1058,7 @@ function extract_var() {
 		extract_var_from_vardb "$name" "$cpv"
 	else
 		format_error <<<"failed extract_var $* :: ${FUNCNAME[@]}" >&2
+		return 1
 	fi
 }
 
@@ -1082,7 +1090,7 @@ function dep_to_cps() {
 		s/\[[^]]*\]//g
 		s/:[^][[:space:]()|]*//g
 	' | tr -s ' \t()' '\n' \
-	| grep -v '^\(||\|.*?\|\)$' \
+	| grep -v '^\(||\|[^/]*?\|\)$' \
 	| grep '/' \
 	| sed '
 		s/^!\{1,2\}//
@@ -1725,6 +1733,9 @@ function world_sets_expand() {
 # already expanded to break cycles.
 function _world_sets_expand_one() {
 	local name="$1" line
+	# Reject anything that could escape the sets directory or trip on shell
+	# pattern characters. Real set names are [a-zA-Z0-9_-]+.
+	[[ "$name" == */* || "$name" == .. || "$name" == .*/* || "$name" != +([[:alnum:]_-]) ]] && return 0
 	[[ -z "${seen[$name]:-}" ]] || return 0
 	seen[$name]=1
 	case "$name" in
@@ -1735,7 +1746,8 @@ function _world_sets_expand_one() {
 	[[ -r "$ETC_PORTAGE_SETS_DIR/$name" ]] || return 0
 	while read -r line; do
 		line="${line%%#*}"
-		line="${line## }"; line="${line%% }"
+		line="${line##+([[:space:]])}"
+		line="${line%%+([[:space:]])}"
 		[[ -z "$line" ]] && continue
 		if [[ "$line" == "@"* ]]; then
 			_world_sets_expand_one "${line#@}"
@@ -1755,14 +1767,15 @@ function db_grep() {
 	elif [[ "$opt_arg_uninstalled" ]]; then
 		for tree in $portage_trees; do
 			[[ -d "${tree}/metadata/md5-cache" ]] || continue
-			cd "${tree}/metadata/md5-cache"
-			grep -rl "${needle}" . 2>/dev/null \
-			| while read cpv; do
+			# Subshell so the cd doesn't leak to the surrounding script.
+			( cd "${tree}/metadata/md5-cache" || exit 0
+			  grep -rl "${needle}" . 2>/dev/null \
+			  | while read cpv; do
 				[[ -e "${tree}/${cpv%-${VER_SHPAT}}/${cpv##*/}.ebuild" ]] \
 					|| [[ -d /var/db/pkg/${cpv} ]] \
 					|| continue
 				[[ "$with_tree" ]] && echo "${cpv:2} ${tree}" || echo "${cpv:2}"
-			done
+			  done )
 		done | { [[ "$with_tree" ]] && cat || sort -u; }
 	else
 		# Default: only installed packages. Grep their per-attribute vardb
@@ -1967,6 +1980,10 @@ function pv_to_cpv() {
 		done
 	done
 }
+# Called per emitted revdep in info_action_rev-exists; on packages with
+# hundreds of revdeps that's hundreds of duplicate category-walks across
+# every repo (~150 cats × 7 trees of stat()s per call). Memoise it.
+memoise pv_to_cpv
 
 function _resolve_depatom_inner_virtual() {
 	v_cp="${v_cpv%-$VER_SHPAT?(\*)}"; v_mlsr="${v_cpv#${v_cp}?(-)}"
@@ -2808,10 +2825,11 @@ function info_action_owners() {
 		/lib64/*)	alt="/usr/lib64/${path#/lib64/}";;
 		esac
 		[[ "$alt" ]] && result="$(info_action_owners_match "$alt")"
-		if [[ -z "$result" && -e "$path" ]]; then
+		if [[ -z "$result" ]]; then
 			local realpath_target
 			realpath_target="$(readlink -f "$path" 2>/dev/null)"
-			[[ "$realpath_target" && "$realpath_target" != "$path" ]] \
+			[[ "$realpath_target" && "$realpath_target" != "$path" \
+				&& "$realpath_target" != "$alt" ]] \
 				&& result="$(info_action_owners_match "$realpath_target")"
 		fi
 	fi
