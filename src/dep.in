@@ -775,36 +775,63 @@ function shlex_parse_assignments() {
 		"$@")
 }
 
+# Read repository configuration via portageq. Populates:
+#   PORTDIR        — location of [DEFAULT] main-repo
+#   portage_trees  — space-separated list of all repo locations, ordered
+#                    highest-priority-first (ties broken by name ascending)
+# Hard-fails if portageq is missing or main-repo can't be resolved.
+function read_repos_config() {
+	local section="" line k v n
+	local main_repo=""
+	declare -gA repo_loc=() repo_prio=()
+	while IFS= read -r line; do
+		case "$line" in
+		\[*\])	section="${line#\[}"; section="${section%\]}";;
+		'')	;;
+		*=*)	k="${line%%=*}"; v="${line#*=}"
+			k="${k% }"; v="${v# }"
+			case "$section/$k" in
+				DEFAULT/main-repo)	main_repo="$v";;
+				*/location)		repo_loc[$section]="$v";;
+				*/priority)		repo_prio[$section]="$v";;
+			esac;;
+		esac
+	done < <(portageq repos_config / 2>/dev/null)
+	if [[ -z "$main_repo" || -z "${repo_loc[$main_repo]:-}" ]]; then
+		echo "load_portage_config: portageq repos_config / failed or missing main-repo" \
+			| format_error >&2
+		exit 1
+	fi
+	PORTDIR="${repo_loc[$main_repo]}"
+	portage_trees=""
+	while read -r _ n; do
+		portage_trees="${portage_trees}${portage_trees:+ }${repo_loc[$n]}"
+	done < <(
+		for n in "${!repo_loc[@]}"; do
+			printf '%d %s\n' "${repo_prio[$n]:-0}" "$n"
+		done | sort -k1,1nr -k2,2
+	)
+}
+
 function load_portage_config() {
 	[[ -h "/etc/portage/make.profile" ]] && profile_stack="$(profile_stack_read /etc/portage/profile .
 		profile_stack_read /etc/portage/make.profile .)"
 
-	# portage settings files are parsed with portage_util.getconfig, which 
-	# uses shlex.shlex. We could source the settings files, but that takes 
-	# ages and gives spurious results. Can we sed it? Yes we can!
-	# Note that the portage devs (well, ciaran at least) refuse to even 
-	# specify what the format of make.conf and friends actually is! 
-	# See http://bugs.gentoo.org/show_bug.cgi?id=100373
-	PORTAGE_VARS_EXPORT="PORTDIR DISTDIR PKGDIR PORT_LOGDIR PORTDIR_OVERLAY PORTAGE_TMPDIR CCACHE_DIR CHOST ARCH ACCEPT_KEYWORDS USE_EXPAND USE_ORDER"
+	# portage settings files are parsed with portage_util.getconfig, which
+	# uses shlex.shlex. We could source the settings files, but that takes
+	# ages and gives spurious results.
+	# Note: PORTDIR / PORTDIR_OVERLAY are deprecated as make.conf vars; the
+	# canonical source is /etc/portage/repos.conf, read via read_repos_config.
+	PORTAGE_VARS_EXPORT="DISTDIR PKGDIR PORTAGE_TMPDIR CCACHE_DIR CHOST ARCH ACCEPT_KEYWORDS USE_EXPAND USE_ORDER"
 	PORTAGE_VARS_KEEP="USE"
 	PORTAGE_VARS_ADDITIVE="USE"
-	PORTAGE_SETTINGS_DEFAULTS='
-PORTDIR="/usr/portage"
-DISTDIR="${PORTDIR}/distfiles"
-PKGDIR="${PORTDIR}/packages"
-PORT_LOGDIR="/var/log/portage"
-PORTAGE_TMPDIR="/var/tmp"
-CCACHE_DIR="${PORTAGE_TMPDIR}/ccache"
-CHOST="i386-pc-linux-gnu"
-ARCH="x86"
-'
+	read_repos_config
 	while read name value; do
 		if ! [[ "${!name+isset}" ]] || has $name $PORTAGE_VARS_ADDITIVE; then
 			eval "$name=\"$value\""
 		fi
 	done <<<"$(
 		shlex_parse_assignments \
-			- <<<"$PORTAGE_SETTINGS_DEFAULTS" \
 			/usr/share/portage/config/make.globals \
 			$(profile_files make.defaults) \
 			/etc/portage/make.conf
@@ -816,11 +843,6 @@ ARCH="x86"
 		done
 	)"
 	read -a ACCEPT_KEYWORDS <<<"$ARCH $ACCEPT_KEYWORDS"
-
-	portage_trees="$PORTDIR "
-	for portage_tree in $PORTDIR_OVERLAY; do
-		portage_trees="$portage_tree $portage_trees"
-	done
 	categories=$(sort -u $(profile_files_extra categories))
 
 	allprofilepackages=$(
