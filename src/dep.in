@@ -20,6 +20,8 @@ spaces="                                                                        
 spaces="${spaces:0:${COLUMNS:=80}}"
 
 WORLD_FILE="/var/lib/portage/world"
+WORLD_SETS_FILE="/var/lib/portage/world_sets"
+ETC_PORTAGE_SETS_DIR="/etc/portage/sets"
 
 function help_fmt() {
 	PLUSMINUS="$(iconv -c -f UTF-8 <<<$'\xc2\xb1')" || PLUSMINUS="+-"
@@ -1390,7 +1392,7 @@ function virtual_version() {
 function dot_depgraph() {
 	local -a handled=() queue=()
 	if [[ "$1" == @(""|world|system) ]]; then
-		[[ "$1" == "system" ]] || for req in $(<{WORLD_FILE}); do
+		[[ "$1" == "system" ]] || for req in $(<${WORLD_FILE}); do
 			queue[${#queue[@]}]="$(resolve_depatom "${req}")"
 		done
 		for req in ${allprofilepackages}; do
@@ -1697,6 +1699,52 @@ function resdepend() {
 	taint_for_ifno=""
 	raw_depends $cpv | crunch_depends "$cpv" "$ordeps" | sort -u
 }
+# pruneworld / depclean walk the same package's deps repeatedly across
+# different needles; memoising resdepend cuts each second-and-later call
+# from a full crunch_depends walk to a cat from $temp_dir.
+memoise resdepend
+
+# Recursively expand /var/lib/portage/world_sets, emitting one atom per line.
+# Sets in @world_sets are looked up in /etc/portage/sets/<name> as plain
+# atom files (Portage's StaticFileSet — the format users normally write).
+# Built-in dynamic sets (@selected, @system, @world, @profile, …) are skipped:
+# @selected duplicates WORLD_FILE, @system duplicates allprofilepackages, and
+# the rest are computed from runtime state we either already cover or
+# couldn't expand without re-implementing Portage's set machinery.
+function world_sets_expand() {
+	[[ -r "$WORLD_SETS_FILE" ]] || return 0
+	local set
+	declare -A seen=()
+	while read -r set; do
+		[[ "$set" == "@"* ]] || continue
+		_world_sets_expand_one "${set#@}"
+	done <"$WORLD_SETS_FILE"
+}
+
+# Recursive helper. $1 is a bare set name (no leading @). $seen tracks names
+# already expanded to break cycles.
+function _world_sets_expand_one() {
+	local name="$1" line
+	[[ -z "${seen[$name]:-}" ]] || return 0
+	seen[$name]=1
+	case "$name" in
+	selected|selected-packages|selected-sets|world|profile|system|installed|usersets|security|preserved-rebuild|live-rebuild|deprecated-live-rebuild|module-rebuild|x11-module-rebuild|rebuilt-binaries)
+		return 0
+		;;
+	esac
+	[[ -r "$ETC_PORTAGE_SETS_DIR/$name" ]] || return 0
+	while read -r line; do
+		line="${line%%#*}"
+		line="${line## }"; line="${line%% }"
+		[[ -z "$line" ]] && continue
+		if [[ "$line" == "@"* ]]; then
+			_world_sets_expand_one "${line#@}"
+		else
+			echo "$line"
+		fi
+	done <"$ETC_PORTAGE_SETS_DIR/$name"
+}
+memoise world_sets_expand
 
 function db_grep() {
 	local needle="$1" with_tree="$2" attr="$3" tree cpv
@@ -1852,7 +1900,8 @@ function _smartdep() {
 			fi
 		fi
 	done
-	cat ${WORLD_FILE} | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
+	{ cat ${WORLD_FILE}; world_sets_expand; } \
+	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
 	| while read depatom; do
 		if dep_satisfies "$ncpv" "$depatom"; then
 			if ! echo "${cands}" | while read candidate; do
@@ -1887,7 +1936,8 @@ function _smartdep_nopv () {
 	done || return 0
 	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
 	| if read depatom; then echo SYSTEM $depatom; fi
-	cat ${WORLD_FILE} | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
+	{ cat ${WORLD_FILE}; world_sets_expand; } \
+	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
 	| if read depatom; then echo WORLD $depatom; fi
 	for virtual in $(virtuals_from $needle); do
 		_smartdep_nopv "$virtual" "yes" "$exclude" "$ordeps"
