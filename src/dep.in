@@ -716,10 +716,18 @@ for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 # first (the correct way for stacking_sort). Each file returned exists.
 
 # handles multiple inheritance - probably pointless
+# Modern parent files may also reference another repository's profile via
+# `<repo-name>:<profile-path>` (path relative to that repo's profiles/ dir).
 function profile_stack_read() {
 	dir="$1"; shift
 	for rel in "$@"; do
-		pdir="$(readlink -f "$dir/$rel")"
+		case "$rel" in
+		*:*)	repo="${rel%%:*}"; subpath="${rel#*:}"
+			[[ "${repo_loc[$repo]:-}" ]] || continue
+			pdir="$(readlink -f "${repo_loc[$repo]}/profiles/$subpath")"
+			;;
+		*)	pdir="$(readlink -f "$dir/$rel")";;
+		esac
 		echo "$pdir"
 		[[ -r "$pdir/parent" ]] && profile_stack_read "$pdir" \
 				$(kill_comments_and_blanks "$pdir/parent")
@@ -728,7 +736,13 @@ function profile_stack_read() {
 
 function profile_files() {
 	while read path; do
-		[[ -r "$path/$1" ]] && echo "$path/$1"
+		if [[ -d "$path/$1" ]]; then
+			# Modern profiles split many of these (use.mask, package.use,
+			# package.use.mask, etc.) into directories of files.
+			find "$path/$1" -type f -readable
+		elif [[ -r "$path/$1" ]]; then
+			echo "$path/$1"
+		fi
 	done <<<"$profile_stack"
 }
 
@@ -738,8 +752,6 @@ function etc_portage_files() {
 		find "/etc/portage/$name" -type f -readable
 	elif [[ -r "/etc/portage/$name" ]]; then
 		echo "/etc/portage/$name"
-	elif [[ -r "/etc/portage/$name/*/*" ]]; then
-		echo "/etc/portage/$name/*/*"
 	fi
 }
 
@@ -749,8 +761,11 @@ function profile_files_extra() {
 	etc_portage_files "$name"
 	profile_files "$name"
 	for x in $portage_trees; do
-		[[ -r "${x%/}/profiles/$name" ]] && echo "${x%/}/profiles/$name"
-		[[ -r "${x%/}/profiles/$name/*/*" ]] && echo "${x%/}/profiles/$name/*/*"
+		if [[ -d "${x%/}/profiles/$name" ]]; then
+			find "${x%/}/profiles/$name" -type f -readable
+		elif [[ -r "${x%/}/profiles/$name" ]]; then
+			echo "${x%/}/profiles/$name"
+		fi
 	done
 }
 
@@ -814,9 +829,6 @@ function read_repos_config() {
 }
 
 function load_portage_config() {
-	[[ -h "/etc/portage/make.profile" ]] && profile_stack="$(profile_stack_read /etc/portage/profile .
-		profile_stack_read /etc/portage/make.profile .)"
-
 	# portage settings files are parsed with portage_util.getconfig, which
 	# uses shlex.shlex. We could source the settings files, but that takes
 	# ages and gives spurious results.
@@ -826,6 +838,10 @@ function load_portage_config() {
 	PORTAGE_VARS_KEEP="USE"
 	PORTAGE_VARS_ADDITIVE="USE"
 	read_repos_config
+	# Walk the profile stack after repo_loc is populated so cross-repo
+	# `<repo>:<path>` parent entries can be resolved.
+	[[ -h "/etc/portage/make.profile" ]] && profile_stack="$(profile_stack_read /etc/portage/profile .
+		profile_stack_read /etc/portage/make.profile .)"
 	while read name value; do
 		if ! [[ "${!name+isset}" ]] || has $name $PORTAGE_VARS_ADDITIVE; then
 			eval "$name=\"$value\""
@@ -855,7 +871,7 @@ function load_portage_config() {
 		| stacking_sort yes
 	)
 
-	[[ -r "use.mask" ]] && usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask)) || usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask/*/*)) # FIXME TODO
+	usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask))
 }
 
 # Cache reads now flow through metadata/md5-cache (per-repo) and the vardb;
@@ -910,7 +926,15 @@ function dep_satisfies() {
 
 function accept_for() {
 	local cp="$1" mlsr="$2" return="${3:-RESULT}"
-	if [[ ! -e /etc/portage/package.keywords ]]; then
+	# package.accept_keywords is the modern canonical name; package.keywords
+	# is the legacy alias and may or may not exist. Either or both can be a
+	# file or a directory of files.
+	local kfiles=()
+	while read -r f; do kfiles+=("$f"); done < <(
+		etc_portage_files package.accept_keywords
+		etc_portage_files package.keywords
+	)
+	if (( ${#kfiles[@]} == 0 )); then
 		read -a "$return" <<<"${ACCEPT_KEYWORDS[@]}"
 		return 0
 	fi
@@ -923,7 +947,7 @@ function accept_for() {
 				|| extra_ks=("${extra_ks[@]}" "${atom_keywords[@]:1}")
 		fi
 	done <<<"$(
-		grep '^[<>=~]*'$cp -r /etc/portage/package.keywords 2>/dev/null
+		grep -h '^[<>=~]*'$cp "${kfiles[@]}" 2>/dev/null
 		)"
 	for keyword in "${extra_ks[@]}"; do
 		case "$keyword" in
@@ -1148,15 +1172,8 @@ function autouse() {
 memoise autouse
 
 function package_use_mask() {
-	[[ -r "package.use.mask" ]] && (
-	# TODO FIXME
+	(
 		kill_comments_and_blanks $(profile_files package.use.mask) \
-		| while read package pusemask; do
-			dep_satisfies "$1" $package && echo $pusemask
-		done | sed 's/[[:space:]]\+/\n/g'
-		echo "$usemask_unstacked"
-	) | stacking_sort yes || (
-		kill_comments_and_blanks $(profile_files package.use.mask/*/*) \
 		| while read package pusemask; do
 			dep_satisfies "$1" $package && echo $pusemask
 		done | sed 's/[[:space:]]\+/\n/g'
@@ -3321,6 +3338,9 @@ function filter_etc_portage() {
 	filter_etc_file package.use package_star_filter package_use_filter yes "all use flags redundant"
 	filter_etc_file package.mask package_mask_filter
 	filter_etc_file package.unmask package_star_filter package_unmask_filter "" "no matching available packages masked by a package.mask"
+	# package.accept_keywords is the canonical modern name; legacy
+	# package.keywords still works if present.
+	filter_etc_file package.accept_keywords package_star_filter package_keywords_filter "" "all keywords redundant"
 	filter_etc_file package.keywords package_star_filter package_keywords_filter "" "all keywords redundant"
 	filter_etc_file profile/packages profile_packages_filter
 	filter_etc_file bashrc bashrc_filter
