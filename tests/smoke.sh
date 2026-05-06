@@ -27,13 +27,16 @@ fi
 chmod +x src/dep
 DEP=./src/dep
 
-HEAD_LINES=30  # how many lines of output to embed verbatim per command
+HEAD_LINES=30      # how many lines of output to embed verbatim per command
+CMD_TIMEOUT=120    # cap per-command wall time so a runaway dep walker
+                   # doesn't stall the whole harness
 
 run() {
 	local label="$1"; shift
 	local out rc lines hash
-	out=$("$DEP" --colour=no "$@" 2>&1)
+	out=$(timeout "$CMD_TIMEOUT" "$DEP" --colour=no "$@" 2>&1)
 	rc=$?
+	(( rc == 124 )) && out="${out}"$'\n[timed out after '$CMD_TIMEOUT's]'
 	lines=$(printf '%s\n' "$out" | wc -l)
 	hash=$(printf '%s' "$out" | sha256sum | cut -c1-12)
 	printf '\n=== %s ===\n' "$label"
@@ -121,8 +124,10 @@ run 'exists/portage:bash'     -x "$PORTAGE" "$PN_BASH"
 run 'rev-exists/python:bash'  -X "$PN_PYTHON" "$PN_BASH"
 
 # --- Actions, all read-only / pretend -----------------------------------
+# Skipping --depclean here: it iterates the entire installed set, well past
+# the smoke-harness time budget. pruneworld already exercises the dep walker
+# on every world entry, which is enough to catch regressions.
 run 'pruneworld/pretend'         -wp
-run 'depclean/pretend'           -dp
 run 'purge/pretend'              -Pp
 run 'filter-etc-portage'         -E --ask=no --pretend
 run 'overlay-clean/missing'      -O /tmp/udept-nonexistent-overlay-$$

@@ -706,7 +706,7 @@ function format_revdep() {
 # _eclasses_.
 #
 # Extract these with extract_var(name, cpv, tree).
-deplines=('' DEPEND RDEPEND SLOT SRC_URI RESTRICT HOMEPAGE LICENSE DESCRIPTION KEYWORDS INHERITED IUSE CDEPEND PDEPEND PROVIDE)
+deplines=('' DEPEND RDEPEND SLOT SRC_URI RESTRICT HOMEPAGE LICENSE DESCRIPTION KEYWORDS INHERITED IUSE CDEPEND PDEPEND PROVIDE BDEPEND IDEPEND)
 for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 
 # New inheriting profiles work thus: /etc/portage/make.profile is a symlink to a 
@@ -858,50 +858,11 @@ function load_portage_config() {
 	[[ -r "use.mask" ]] && usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask)) || usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask/*/*)) # FIXME TODO
 }
 
-function ebuild_dep_to_stdout() {
-	ebuild="$1"; cat="$2"; pn="$3"; mlsr="$4"
-	mls="${mlsr%-r+([[:digit:]])}"; rev="${mlsr#$mls-}"
-	dbkey=/dev/stdout ECLASSDIR=$PORTDIR/eclass EBUILD=$ebuild \
-	P="$pn-$mls" PN="$pn" PV="$mls" PR="${rev:-r0}" PVR="$mlsr" \
-	PF="$pn-$mlsr" CATEGORY="$cat" PORTDIR_OVERLAY="$PORTDIR_OVERLAY" \
-	EBUILD_PHASE="depend" /usr/lib/portage/bin/ebuild.sh depend
-}
-
-function ebuild_dep_from_vardb() {
-	cpv="$1"; cat="${cpv%/*}"; pv="${cpv#$cat/}"; 
-	pn="${pv/%-$VER_SHPAT}"; mlsr="${pv#$pn-}"
-	ebuild_dep_to_stdout /var/db/pkg/$cpv/$pv.ebuild $cat $pn $mlsr
-}
-memoise ebuild_dep_from_vardb
-
-# TODO adapt to portage 2.1 edb format
-function ebuild_dep_to_edb() {
-	echo ebuild_dep_to_edb "$*" | format_error >&2
-	cpv="$1"; tree="$2"; cp="${cpv/%-$VER_SHPAT}"; mlsr="${cpv#$cp-}"
-	cat="${cp%/*}"; pn="${cp#${cat}/}"
-	depfile=/var/cache/edb/dep/$tree/$cpv
-	ebuild=$tree/$cat/$pn/$pn-$mlsr.ebuild
-	if [[ ! -f $ebuild ]]; then
-		echo Could not find $ebuild | format_error >&2
-		return 1
-	fi
-	mkdir -p ${depfile%/*}
-	ebuild_dep_to_stdout $ebuild $cat $pn $mlsr > $depfile
-}
-
-function populate_from_tree() {
-	cp="$1"
-	for tree in $portage_trees; do
-		for ebuild in ${tree%/}/${cp}/${cp#*/}-$VER_SHPAT.ebuild; do
-			[[ -f "$ebuild" ]] || continue
-			mlsr=${ebuild#${tree%/}/${cp}/${cp#*/}-}
-			mlsr=${mlsr%.ebuild}
-			cpv=$cp-$mlsr
-			[[ -f /var/cache/edb/dep/$tree/$cpv ]] && continue
-			ebuild_dep_to_edb $cpv $tree
-		done
-	done
-}
+# Cache reads now flow through metadata/md5-cache (per-repo) and the vardb;
+# the legacy ebuild_dep_to_stdout / ebuild_dep_to_edb / ebuild_dep_from_vardb
+# functions and the populate_from_tree helper were removed in phase 2.
+# /usr/lib/portage/bin/ebuild.sh has moved into the python sub-tree and we no
+# longer regenerate cache files on demand — Portage already maintains them.
 
 function vercmp() {
 	comm_ver "$1" "$3"
@@ -989,13 +950,13 @@ function edb_tree() {
 	cpv="$1"
 	cp="${cpv/%-$VER_SHPAT}"; mlsr="${cpv#$cp-}"; pv="${cpv#*/}"
 	for tree in ${portage_trees}; do
-		[[ -f /var/cache/edb/dep/${tree}/${cpv} ]] || continue
+		[[ -f ${tree}/metadata/md5-cache/${cpv} ]] || continue
 		is_keyword_masked $cp $mlsr $tree && continue
 		echo ${tree%/}
 		return 0
 	done
 	for tree in ${portage_trees}; do
-		[[ -f /var/cache/edb/dep/${tree}/${cpv} ]] || continue
+		[[ -f ${tree}/metadata/md5-cache/${cpv} ]] || continue
 		echo ${tree%/}
 		return 0
 	done
@@ -1004,55 +965,49 @@ function edb_tree() {
 }
 
 function extract_var_from_vardb() {
-	local name="$1" name2="depline_$1" cpv="$2"
+	local name="$1" cpv="$2"
 	if [[ "$name" && -e /var/db/pkg/$cpv/$name ]]; then
 		cat /var/db/pkg/$cpv/$name
-	elif [[ "${!name2}" ]]; then
-		ebuild_dep_from_vardb $cpv | sed "${!name2}!d"
 	elif [[ -e "/var/db/pkg/${cpv}/environment.bz2" ]]; then
 		bunzip2 -c "/var/db/pkg/${cpv}/environment.bz2" \
 			| sed 's!^'"${name}"'=!!;t;d'
 	fi
 }
 
+# Read NAME from a per-repo metadata/md5-cache/CPV file (key=value format).
+# INHERITED is reconstructed from _eclasses_ (name<TAB>md5 pairs).
 function extract_var_from_edb() {
 	local name=$1 tree=$2 cpv=$3
-	if read && [[ "$REPLY" == +([[:word:]])=* ]]; then
-		# portage 2.1 format
-		if [[ "$name" == INHERITED ]]; then
-			while :; do if [[ "$REPLY" == "_eclasses_="* ]]; then
-				eclasses=(${REPLY#_eclasses_=})
-				for ((i=0;i<${#eclasses[@]};i+=3)); do
-					echo -n "${eclasses[$i]} "
-				done; echo; break
-			else read || break; fi; done
-		else
-			while :; do if [[ "$REPLY" == "$name="* ]]; then
-				echo "${REPLY#$name=}"; break
-			else read || break; fi; done
-		fi
+	if [[ "$name" == INHERITED ]]; then
+		while IFS= read -r REPLY; do
+			[[ "$REPLY" == "_eclasses_="* ]] || continue
+			eclasses=(${REPLY#_eclasses_=})
+			for ((i=0;i<${#eclasses[@]};i+=2)); do
+				echo -n "${eclasses[$i]} "
+			done
+			echo
+			break
+		done <"$tree/metadata/md5-cache/$cpv"
 	else
-		# portage 2.0 format
-		name2=depline_$name; num=${!name2}
-		for ((i=1;i<num;++i)); do read; done; echo "$REPLY"
-	fi </var/cache/edb/dep/$tree/$cpv
+		while IFS= read -r REPLY; do
+			[[ "$REPLY" == "$name="* ]] || continue
+			echo "${REPLY#$name=}"
+			break
+		done <"$tree/metadata/md5-cache/$cpv"
+	fi
 }
 
 function extract_var() {
 	local name="$1" cpv="$2" tree="$3"
 	if [[ "$opt_arg_original_depends" && -d /var/db/pkg/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
-	elif [[ -f /var/cache/edb/dep/$tree/$cpv ]]; then
+	elif [[ "$tree" && -f "$tree/metadata/md5-cache/$cpv" ]]; then
 		extract_var_from_edb "$name" "$tree" "$cpv"
-	elif [[ "$tree" && -f "$tree/${cpv/%-$VER_SHPAT}/${cpv#*/}.ebuild" ]]; then
-		ebuild_dep_to_edb ${cpv} ${tree}
-		extract_var_from_edb "$name" "$tree" "$cpv"
-	elif [[ -z "$tree" ]] && newtree="$(best_tree $cpv)"; then
+	elif [[ -z "$tree" ]] && newtree="$(best_tree $cpv)" \
+			&& [[ -f "$newtree/metadata/md5-cache/$cpv" ]]; then
 		extract_var "$name" "$cpv" "$newtree"
 	elif [[ -d /var/db/pkg/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
-	elif [[ -z "$tree" ]] && newtree="$(edb_tree $cpv)"; then
-		extract_var "$name" "$cpv" "$newtree"
 	else
 		format_error <<<"failed extract_var $* :: ${FUNCNAME[@]}" >&2
 	fi
@@ -1216,6 +1171,7 @@ function usecomponent() {
 		repo);;
 		pkginternal) [[ "$cpv" ]] && pkginternal_use_for "$cpv";;
 		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' /etc/portage/profile.env;;
+		features|repo);;  # TODO phase 4: implement FEATURES-forced and per-repo USE
 		*) format_error <<<"Unknown USE component: $component" >&2;;
 	esac
 }
@@ -1550,9 +1506,13 @@ function makeideal() {
 function raw_depends() {
 	cpv=$1
 	(
-		[[ "$opt_arg_build_time" ]] && extract_var DEPEND $cpv
+		if [[ "$opt_arg_build_time" ]]; then
+			extract_var DEPEND $cpv
+			extract_var BDEPEND $cpv
+		fi
 		extract_var RDEPEND $cpv
 		extract_var PDEPEND $cpv
+		extract_var IDEPEND $cpv
 	) | sed 's/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g'
 }
 
@@ -1727,8 +1687,9 @@ function db_grep() {
 		| cut -d/ -f5-6
 	elif [[ "$opt_arg_uninstalled" ]]; then
 		for tree in $portage_trees; do
-			cd /var/cache/edb/dep/${tree}
-			grep -r --exclude '*.pickle' --exclude '*.cpickle' -l "${needle}" . \
+			[[ -d "${tree}/metadata/md5-cache" ]] || continue
+			cd "${tree}/metadata/md5-cache"
+			grep -rl "${needle}" . 2>/dev/null \
 			| while read cpv; do
 				[[ -e "${tree}/${cpv%-${VER_SHPAT}}/${cpv##*/}.ebuild" ]] \
 					|| [[ -d /var/db/pkg/${cpv} ]] \
@@ -1737,14 +1698,22 @@ function db_grep() {
 			done
 		done | { [[ "$with_tree" ]] && cat || sort -u; }
 	else
-		for tree in $portage_trees; do
-			cd /var/cache/edb/dep/${tree}
-			find /var/db/pkg -mindepth 2 -maxdepth 2 -printf '%P\n' \
-			| xargs grep -l "${needle}" 2>/dev/null \
-			| while read cpv; do
-				[[ "$with_tree" ]] && echo "${cpv} ${tree}" || echo "$cpv"
-			done
-		done | { [[ "$with_tree" ]] && cat || sort -u; }
+		# Default: only installed packages. Grep their per-attribute vardb
+		# files directly — vardb dep files reflect what the package was
+		# actually installed with, which is the right answer for revdep.
+		find /var/db/pkg -mindepth 3 -maxdepth 3 \
+			\( -name DEPEND -o -name RDEPEND -o -name BDEPEND \
+			   -o -name IDEPEND -o -name PDEPEND \) \
+		| xargs grep -l "${needle}" 2>/dev/null \
+		| sed -n 's!^/var/db/pkg/\([^/]*/[^/]*\)/.*!\1!p' \
+		| sort -u \
+		| while read cpv; do
+			if [[ "$with_tree" ]]; then
+				echo "${cpv} $(best_tree $cpv)"
+			else
+				echo "${cpv}"
+			fi
+		done
 	fi
 }
 
@@ -2095,16 +2064,14 @@ function is_keyword_masked() {
 }
 
 function avail_versions() {
-	local cp="$1" showtree="$2" populate_from_tree="$3" 
+	local cp="$1" showtree="$2" _unused="$3"
 	local excl_pmask="$4" excl_kmask="$5"
-	[[ "$populate_from_tree" ]] && populate_from_tree "$cp"
-	local any_printed="" tree
+	local any_printed="" tree ebuild mlsr pn=${cp#*/}
 	for tree in $portage_trees; do
-		local deppath=/var/cache/edb/dep/${tree%/} depfile
-		for depfile in ${deppath}/${cp}-$VER_SHPAT; do
-			[[ -f "$depfile" ]] || continue
-			local mlsr=${depfile#${deppath}/${cp}-}
-			[[ -f ${tree:-$PORTDIR}/$cp/${cp#*/}-$mlsr.ebuild ]] || continue
+		for ebuild in ${tree%/}/${cp}/${pn}-$VER_SHPAT.ebuild; do
+			[[ -f "$ebuild" ]] || continue
+			mlsr=${ebuild#${tree%/}/${cp}/${pn}-}
+			mlsr=${mlsr%.ebuild}
 			[[ "$excl_pmask" ]] && is_package_masked $cp $mlsr && continue
 			[[ "$excl_kmask" ]] && is_keyword_masked $cp $mlsr $tree && continue
 			[[ "$showtree" ]] && echo $mlsr ${tree%/} || echo $mlsr
@@ -2270,10 +2237,13 @@ function print_depstring() {
 function info_action_depstrings() {
 	set_xterm_title "Displaying raw dependencies of $1"
 	local cpv="$1"
-	[[ "$opt_arg_build_time" ]] && print_depstring DEPEND $cpv
+	if [[ "$opt_arg_build_time" ]]; then
+		print_depstring DEPEND $cpv
+		print_depstring BDEPEND $cpv
+	fi
 	print_depstring RDEPEND $cpv
-	print_depstring CDEPEND $cpv
 	print_depstring PDEPEND $cpv
+	print_depstring IDEPEND $cpv
 	echo
 }
 
@@ -2542,8 +2512,7 @@ function info_action_keywords() {
 # thanks ciaranm for eshowkw
 	set_xterm_title "Displaying cross-arch keywords for $1"
 	local cp="$1"; local pn=${cp#*/}
-	populate_from_tree "$cp"
-	
+
 	local mlsrs trees lmlsr=0 mlsr tree
 	mlsrs=(); trees=()
 	while read mlsr tree; do
