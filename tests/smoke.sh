@@ -49,11 +49,6 @@ run() {
 }
 
 # Pick targets that exist on this system. We want stable, common packages.
-pick_one() {
-	for cand in "$@"; do
-		[[ -d /var/db/pkg/$cand ]] && { echo "$cand"; return; }
-	done
-}
 pick_glob() {
 	# pick first installed package matching cat/name-prefix
 	local g
@@ -69,8 +64,8 @@ PORTAGE=$(pick_glob sys-apps/portage)
 BASH_PKG=$(pick_glob app-shells/bash)
 PYTHON=$(pick_glob dev-lang/python-3)
 GLIBC=$(pick_glob sys-libs/glibc)
-VIRTUAL_EDITOR=$(pick_one virtual/editor)
-VIRTUAL_LIBC=$(pick_one virtual/libc)
+VIRTUAL_EDITOR=$(pick_glob virtual/editor)
+VIRTUAL_LIBC=$(pick_glob virtual/libc)
 
 # A short package-name (PN) for actions that take PNAME
 PN_PORTAGE=portage

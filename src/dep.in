@@ -1056,10 +1056,6 @@ function keywords_for() {
 	read -a "${3:-RESULT}" <<<"$(extract_var KEYWORDS $1 $2)"
 }
 
-function provide_for() {
-	extract_var PROVIDE $1 $2
-}
-
 function slot_for() {
 	extract_var SLOT $1 $2
 }
@@ -1076,83 +1072,66 @@ function pkginternal_use_for() {
 	done
 }
 
-function contingent_provide_for() {
-	cpv="$1"; cp="${cpv/%-$VER_SHPAT}"
-	local provide="$(provide_for $cpv $2)"
-	if [[ "$provide" == *"?"* ]] ; then
-		toks=( $provide )
-		for (( i=0; i<${#toks[@]}; ++i )); do 
-			case ${toks[$i]} in
-				*\? )
-				flag=${toks[$i]%?}; flag=${flag#!}
-				if if has $flag $(dbuse $cpv)
-				then [[ "${toks[$i]}" != \!* ]]
-				else [[ "${toks[$i]}" == \!* ]]; fi; then
-					(( ++i ))
-					echo ${toks[$i]%-$VER_SHPAT}
-				fi;;
-				* )
-				echo ${toks[i]%-$VER_SHPAT};;
-			esac
-		done
-	else
-		echo "${provide//[[:space:]]/
-}"
-	fi
+# Read a DEPEND/RDEPEND token soup on stdin; emit one bare cat/pkg per line.
+# Strips USE-deps, slot suffixes, version operators, version, blockers, and
+# control tokens (||, parens, use? markers).
+function dep_to_cps() {
+	sed '
+		s/\[[^]]*\]//g
+		s/:[^][[:space:]()|]*//g
+	' | tr -s ' \t()' '\n' \
+	| grep -v '^\(||\|.*?\|\)$' \
+	| grep '/' \
+	| sed '
+		s/^!\{1,2\}//
+		s/^[<>=~]\{1,2\}//
+		s/-'"$VER_REGEXP"'\*\?$//
+	' | sort -u
 }
 
-function get_contingent_virtuals() {
-	if [[ -s /var/cache/edb/virtuals ]]; then
-		cat /var/cache/edb/virtuals
-		return
-	fi
-	# note: portage treeVirtuals comes from cpv_all, which uses listdir()
-	# so prefers installed packages according to their on-disk directory
-	# order. Yes, this is silly. (portage.py vardbapi.cpv_all() @@4729)
-	trap return SIGPIPE
-	find /var/db/pkg -mindepth 3 -maxdepth 3 -name PROVIDE \
-		-and -not -size 0c -and -not -size 1c \
-	| cut -d/ -f5-6 \
-	| while read cpv; do
-		cp="${cpv%-$VER_SHPAT}"
-		opt_arg_original_depends=1 contingent_provide_for $cpv \
-			| while read; do [[ "$REPLY" ]] && echo "$REPLY $cp"; done
-	done
-	trap - SIGPIPE
-}
-
-function read_virtuals() {
-	for vfile; do 
-		[[ -e "$vfile" ]] && while read virt cps; do 
-			for cp in $cps; do echo "$virt $cp"; done
-		done <"$vfile"
-	done
-}
-
+# Modern virtuals model: each virtual/foo is a real package whose RDEPEND
+# (often as a top-level || group) names the providers. allvirtuals walks
+# the virtual/ category in every repo and emits, one per line:
+#     virtual/cp  provider_cp1 provider_cp2 ...
+# Replaces the old PROVIDE-scraping pipeline (PROVIDE was removed in EAPI 5,
+# /var/cache/edb/virtuals doesn't get written by modern Portage, profile
+# 'virtuals' files are deprecated).
 function allvirtuals() {
-	set_xterm_title "Calculating virtuals... collecting"
+	set_xterm_title "Calculating virtuals... walking virtual/ category"
 	trap return SIGPIPE
 	(
-		# portage.py settings.__getvirtuals_compile() @@1533
-		treeVirtuals=$(get_contingent_virtuals)
-		dirVirtuals=$(read_virtuals $(profile_files virtuals))
-		userVirtuals=$(read_virtuals /etc/portage/virtuals)
-		# utVirtuals := treeVirtuals /\ userVirtuals
-		comm -1 -2 <(sort <<<"$treeVirtuals") <(sort <<<"$userVirtuals")
-		# ptVirtuals := treeVirtuals /\ dirVirtuals
-		comm -1 -2 <(sort <<<"$treeVirtuals") <(sort <<<"$dirVirtuals")
-		echo "$treeVirtuals"
-		echo "$userVirtuals"
-		echo "$dirVirtuals"
-		set_xterm_title "Calculating virtuals... sorting"
-	) | kill_comments_and_blanks - | sort -s -k1,1 | (
+		local tree cp_dir cp ebuild cpv
+		for tree in $portage_trees; do
+			[[ -d "$tree/virtual" ]] || continue
+			for cp_dir in "$tree"/virtual/*; do
+				[[ -d "$cp_dir" ]] || continue
+				cp="virtual/${cp_dir##*/}"
+				# One ebuild per virtual is enough: providers rarely vary
+				# across versions, and overlays are tie-broken by phase 1's
+				# priority ordering of $portage_trees.
+				for ebuild in "$cp_dir"/*.ebuild; do
+					[[ -f "$ebuild" ]] || continue
+					cpv="virtual/${ebuild##*/}"; cpv="${cpv%.ebuild}"
+					( extract_var RDEPEND "$cpv" "$tree"
+					  extract_var DEPEND  "$cpv" "$tree"
+					) | dep_to_cps | while read provider; do
+						[[ "$provider" ]] && echo "$cp $provider"
+					done
+					break
+				done
+			done
+		done
+	) | sort -u | (
 		virtual=""; cps=""
-		while read newv cp; do if [[ "$newv" == "$virtual" ]]; then
-			has $cp $cps || cps="$cps $cp"
-		else
-			[[ "$virtual" ]] && echo "$virtual $cps"
-			virtual="$newv"; cps="$cp"
-		fi; done; [[ "$virtual" ]] && echo "$virtual $cps"
+		while read newv cp; do
+			if [[ "$newv" == "$virtual" ]]; then
+				has "$cp" $cps || cps="$cps $cp"
+			else
+				[[ "$virtual" ]] && echo "$virtual $cps"
+				virtual="$newv"; cps="$cp"
+			fi
+		done
+		[[ "$virtual" ]] && echo "$virtual $cps"
 	)
 	trap - SIGPIPE
 	set_xterm_title "Calculating virtuals... done"
@@ -1384,27 +1363,26 @@ function has_version() {
 	esac
 }
 
+# Given a cp, list virtual/* cps that name it as a provider.
 function virtuals_from() {
-	cp=$1
-	allvirtuals | while read virtual provider providers; do
-		[[ "$provider" == "$cp" || "$provider" \
-		== @(<|<=|=|~|>=|>)"$cp"-$VER_SHPAT?(\*) ]] && echo $virtual
+	local cp="$1" virtual providers p
+	allvirtuals | while read virtual providers; do
+		for p in $providers; do
+			[[ "$p" == "$cp" ]] && { echo "$virtual"; break; }
+		done
 	done
 }
 
+# Modern virtuals don't bind providers to a particular version: virtual/foo
+# is just a package whose RDEPEND lists candidate providers, evaluated at
+# resolution time. So the answer to "given that $cp-$mlsr provides
+# $virtual, what mlsr should we ascribe to the virtual?" is just the
+# provider's own mlsr — there's no separate virtual-version contour.
 function virtual_version() {
-	cp=$1; mlsr=$2; virtual=$3; tree=$4
-	contingent_provide_for $cp-$mlsr $tree \
-	| while read provide; do
-		provide_base="${provide%-$VER_SHPAT}"
-		[[ "${provide_base}" == "${virtual}" ]] || continue
-		if [[ "${provide_base}" == "${provide}" ]]; then
-			echo ${mlsr}
-		else
-			echo ${provide#${provide_base}-}
-		fi
-		return 1
-	done || return 0
+	local cp=$1 mlsr=$2 virtual=$3
+	for v in $(virtuals_from "$cp"); do
+		[[ "$v" == "$virtual" ]] && { echo "$mlsr"; return 0; }
+	done
 	return 1
 }
 
@@ -2174,7 +2152,7 @@ function all_installed_cp_mlsrs() {
 function is_running_kernel() {
 	cpv=$1
 	[[ -d /var/db/pkg/$cpv ]] \
-		&& has virtual/linux-sources $(contingent_provide_for $cpv) \
+		&& has virtual/linux-sources $(virtuals_from "${cpv%-$VER_SHPAT}") \
 		&& [[ "$(extract_var_from_vardb KV $cpv)" == "$(uname -r)" ]]
 }
 
@@ -2811,71 +2789,37 @@ function info_action_catpackages() {
 	) | sort -u | while read x; do echo -n "    "; format_cpv $1/$x; done
 }
 
-# List installed packages providing specified virtual
-# FIXME remove versioned virtual support (gone from portage)
+# List packages providing the specified virtual. With the modern virtual/*
+# model, providers are bare cps named in the virtual's RDEPEND/DEPEND, so
+# there are no per-provider version operators to honour — we just print the
+# provider name and its installed/available mlsrs (highest first).
 function info_action_virtuals() {
 	set_xterm_title "Displaying packages providing $1"
-	cpv="$1"; cp="${cpv%-$VER_SHPAT}"; vmlsr="${cpv#$cp-}"
+	local cpv="$1" cp="${1%-$VER_SHPAT}" virtual providers provider mlsrs mlsr
 	allvirtuals | while read virtual providers; do
 		[[ "$virtual" == "$cp" ]] || continue
-		is_first="yes"; done_providers=""
 		for provider in $providers; do
-			has $provider $done_providers && continue
-			done_providers="$done_providers $provider"
-			p_cpv="${provider/#@(<|<=|=|~|>=|>)}"
-			p_vs="${provider%${p_cpv}}"
-			p_cp="${p_cpv%-$VER_SHPAT?(\*)}"
-			p_mlsr="${p_cpv#${p_cp}-}"
-			[[ "$is_first" ]] \
-			&& echo -n $'\t'"${BR}$(pad 35 $provider)${NO}" \
-			|| echo -n $'\t'"$(pad 35 $provider)"
-			is_first=""
-			provided_mlsrs $p_cp | sort -u | mlsr_sort \
-			| while read mlsr; do
-				dep_satisfies_mlsr "$mlsr" "$p_vs" "$p_mlsr" \
-				|| continue
-				if [[ "$cp" == "$cpv" ]]; then
-					col=NO
-				else
-					comm_ver $mlsr $vmlsr; ret=$?
-					if [[ $ret -eq 0 ]]; then
-						col=GR
-					elif [[ $ret -lt 128 ]]; then
-						col=BL
-					else
-						col=RD
-					fi
-				fi
-				echo -n " ${!col}$mlsr${NO}"
-			done
+			mlsrs="$(provided_mlsrs "$provider" | sort -u | mlsr_sort)"
+			if [[ "$mlsrs" ]]; then
+				echo -n $'\t'"${BR}$(pad 35 $provider)${NO}"
+				for mlsr in $mlsrs; do echo -n " $mlsr"; done
+			else
+				echo -n $'\t'"$(pad 35 $provider)"
+			fi
 			echo
 		done
 		break
 	done
-	if [[ "$opt_arg_uninstalled" ]]; then
-		db_grep "\\<$cp\\>" "" \
-		| while read ppv; do
-			has "$cp" $(contingent_provide_for $ppv) \
-				&& echo "	$ppv"
-		done
-	fi
 }
 
 function info_action_provides() {
 	set_xterm_title "Displaying virtuals provided by $1"
-	cpv=$1; cp=${cpv%-$VER_SHPAT}; mlsr="${cpv#$cp-}"
-	for provide in $(contingent_provide_for $cp-$mlsr); do
-		provide_base=${provide%-$VER_SHPAT}
-		if [[ "$provide_base" == "$provide" ]]; then
-			pcpv="$(resolve_depatom $provide_base)" \
-			&& fcpv="$(format_cpv $pcpv)" || fcpv="${RD}!!!${NO}"
-		else
-			pcpv="$(resolve_depatom ">=$provide")" \
-			&& fcpv="$(format_cpv $pcpv)" || fcpv="${RD}!!!${NO}"
-		fi
-		[[ "$cpv" == "$pcpv" ]] \
-		&& echo -n $'\t'"${Gr}$(pad 24 $provide)${NO}" \
-		|| echo -n $'\t'"$(pad 24 $provide)"
+	local cpv=$1 cp=${1%-$VER_SHPAT} virtual fcpv vcpv
+	for virtual in $(virtuals_from "$cp"); do
+		vcpv="$(resolve_depatom "$virtual")" \
+			&& fcpv="$(format_cpv $vcpv)" \
+			|| fcpv="${RD}!!!${NO}"
+		echo -n $'\t'"$(pad 24 $virtual)"
 		echo "$fcpv"
 	done
 }
