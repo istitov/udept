@@ -5,3 +5,12 @@
 *.patch
 *.swp
 autom4te.cache/
+
+# autotools build artefacts
+configure~
+config.log
+config.status
+Makefile
+*/Makefile
+src/dep
+completion/dep
