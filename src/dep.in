@@ -890,6 +890,13 @@ function dep_satisfies_mlsr() {
 function dep_satisfies() {
 	testpkg="$1"
 	depatom="$2"
+	# Drop USE-dep brackets ([foo,-bar,baz?]) and slot suffixes (:0, :=, :*) —
+	# we don't filter on them so the bare cat/pkg-version still names the right
+	# target.
+	while [[ "$depatom" == *\[*\]* ]]; do
+		depatom="${depatom%%\[*}${depatom#*\]}"
+	done
+	depatom="${depatom%%:*}"
 	t_cp="${testpkg/%-$VER_SHPAT}"
 	t_mlsr="${testpkg#${t_cp}-}"
 	d_cpv="${depatom/#@(<|<=|=|~|>=|>)}"
@@ -962,6 +969,14 @@ function edb_tree() {
 	done
 	echo $PORTDIR
 	return 1
+}
+
+# Strip the EAPI 1+ default-state prefixes (+ for forced-on, - for forced-off)
+# from a whitespace-separated IUSE list read on stdin. Hyphens inside flag names
+# (e.g. native-extensions) are preserved — only prefixes after a word boundary
+# are stripped.
+function strip_iuse_prefixes() {
+	sed 's/[[:space:]]\+[+-]/ /g; s/^[+-]//'
 }
 
 function extract_var_from_vardb() {
@@ -1513,7 +1528,16 @@ function raw_depends() {
 		extract_var RDEPEND $cpv
 		extract_var PDEPEND $cpv
 		extract_var IDEPEND $cpv
-	) | sed 's/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g'
+	) | sed '
+		# Strip USE-dep brackets — [foo,-bar,baz?,quux=,(+),(-)] etc.
+		# We don'\''t propagate USE constraints through resolution, so the
+		# atom without them still names the right package.
+		s/\[[^]]*\]//g
+		# Strip slot/sub-slot/operator suffixes — :0, :*, :=, :0/2, :0=
+		s/:[^][[:space:]()|]*//g
+		# Tokenise: parens become standalone tokens, whitespace -> newlines
+		s/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g
+	'
 }
 
 # This is AFAICT the only formal specification of Portage dependency syntax
@@ -1725,7 +1749,9 @@ function potential_revdepends() {
 		|| excl_sed="$excl_sed"'\|^'"${excl}-$VER_REGEXP"'$'
 	done
 	excl_sed="$excl_sed!d"
-	db_grep "${needle}"'\(-[0-9]\| \|)\|$\)' "" '*DEPEND' \
+	# An atom starting with $needle is followed by one of: -DIGIT (version),
+	# space, ), end-of-line, : (slot), or [ (USE-deps).
+	db_grep "${needle}"'\(-[0-9]\| \|)\|$\|:\|\[\)' "" '*DEPEND' \
 	| sed -e "$excl_sed"
 }
 
@@ -2380,7 +2406,7 @@ function info_action_usedesc() {
 	local alluse="$(dbuse)" my_use=$(dbuse "$cpv") ouse=""
 	[[ -d /var/db/pkg/$cpv ]] && ouse=$(</var/db/pkg/$cpv/USE) || unset ouse
 	pusemask=$(package_use_mask "$cpv")
-	for x in $(extract_var IUSE $cpv | sed 's/[[:space:]]/\n/g' | sort -u)
+	for x in $(extract_var IUSE $cpv | strip_iuse_prefixes | sed 's/[[:space:]]/\n/g' | sort -u)
 	do
 		if has $x $pusemask; then
 			echo -n "($x)$(pads 10 $x): "; use_desc $x $cpv
@@ -2405,7 +2431,7 @@ function info_action_iuse() {
 	set_xterm_title "Listing packages with $1 in IUSE"
 	db_grep "\\<$1\\>" "yes" IUSE \
 	| while read x tree; do
-		has $1 $(extract_var IUSE $x $tree) || continue
+		has $1 $(extract_var IUSE $x $tree | strip_iuse_prefixes) || continue
 		echo -n $'\t'"$(format_cpv "$x")"
 		(( opt_arg_verbose > 0 )) && echo ": $(use_desc $1 $x)" || echo
 	done

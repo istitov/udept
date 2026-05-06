@@ -77,8 +77,10 @@ PN_PORTAGE=portage
 PN_BASH=bash
 PN_PYTHON=python
 
-# A file path likely owned by something
-OWNED_FILE=/usr/bin/bash
+# A file path likely owned by something. Pick the bash binary's canonical
+# location so we don't get confused by /usr-merge symlinks (those are not
+# recorded in CONTENTS — phase 7 polish will teach owners about realpath).
+OWNED_FILE=$(readlink -f /bin/bash 2>/dev/null || echo /bin/bash)
 
 printf 'udept smoke harness — %s\n' "$(date -u +%FT%TZ)"
 printf 'dep version: '; "$DEP" --colour=no --version | head -1
