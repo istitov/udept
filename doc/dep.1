@@ -55,6 +55,7 @@ Options: (--option=[yes,no] unless otherwise indicated)      (default)
   \(+-K, --colour[=yes,no,auto,html] Colour output                 (auto)
   \(+-v[num], --verbose[=num] Verbosity level (cumulative) (1 console, 0 pipe)
   \(+-1, --for-emerge Produce output suitable for emerge --oneshot   (no)
+      --full-atoms   With --for-emerge, append :slot and ::repo to atoms (no)
   \(+-b, --build-time Include deps needed to build PACKAGE          (yes)
   \(+-o, --original-depends Calculate deps as when PACKAGE was merged (no)
   \(+-q, --unique-depends Show dependencies that only PACKAGE requires (no)
@@ -163,6 +164,9 @@ Verbosity level (cumulative) (default: 1 console, 0 pipe)
 .TP
 \fB\(+-1\fR, \fB--for-emerge\fR
 Produce output suitable for emerge --oneshot (default: no)
+.TP
+\fB--full-atoms\fR
+With --for-emerge, append :slot and ::repo to atoms (default: no)
 .TP
 \fB\(+-b\fR, \fB--build-time\fR
 Include deps needed to build PACKAGE (default: yes)
