@@ -276,6 +276,7 @@ arg info z size			"Display disk space used by PACKAGE" 			PACKAGE
 arg opt K colour 		"Colour output" 			    '' yes,no,auto,html auto
 arg opt v verbose  	"Verbosity level (cumulative)" '' NUMBER "1 console, 0 pipe"
 arg opt 1 "for-emerge" "Produce output suitable for emerge --oneshot" '' BINARY no
+arg opt '' "full-atoms" "With --for-emerge, append :slot and ::repo to atoms" '' BINARY no
 arg opt b build-time "Include deps needed to build PACKAGE" 	   '' BINARY yes
 arg opt o original-depends "Calculate deps as when PACKAGE was merged" '' BINARY no
 arg opt q unique-depends "Show dependencies that only PACKAGE requires" '' BINARY no
@@ -672,6 +673,36 @@ function format_cpv() {
 	fi
 }
 
+# Build an emerge-feedable atom for $cpv. Default is '=cat/pkg-version'.
+# With --full-atoms on, append ':slot' and '::repo' when known so the atom
+# disambiguates packages with multiple installed slots and pinpoints the
+# source repository. Sub-slots are stripped (they're rebuild-tracking, not
+# selection).
+function format_atom_for_emerge() {
+	local cpv="$1"
+	[[ "$cpv" ]] || return
+	local atom="=$cpv"
+	if [[ "$opt_arg_full_atoms" ]]; then
+		local slot
+		slot="$(slot_for "$cpv" 2>/dev/null)"
+		[[ "$slot" ]] && atom="${atom}:${slot%/*}"
+		local repo=""
+		if [[ -f "${VARDB_DIR}/$cpv/repository" ]]; then
+			repo="$(<"${VARDB_DIR}/$cpv/repository")"
+		else
+			local tree r
+			tree="$(best_tree "$cpv" 2>/dev/null)"
+			if [[ "$tree" ]]; then
+				for r in "${!repo_loc[@]}"; do
+					[[ "${repo_loc[$r]%/}" == "${tree%/}" ]] && { repo="$r"; break; }
+				done
+			fi
+		fi
+		[[ "$repo" ]] && atom="${atom}::${repo}"
+	fi
+	echo "$atom"
+}
+
 function format_taint() {
 	local cpv="$1"
 	for tok in "${@:2}"; do
@@ -719,7 +750,7 @@ function format_revdep() {
 		if [[ "$opt_arg_for_emerge" ]]; then
 			# Flat atom list for piping into emerge; skip non-atom
 			# sentinels (WORLD/SYSTEM/KERNEL).
-			[[ "$deppkg" == @(WORLD|SYSTEM|KERNEL) ]] || echo "=$deppkg"
+			[[ "$deppkg" == @(WORLD|SYSTEM|KERNEL) ]] || format_atom_for_emerge "$deppkg"
 			continue
 		fi
 		case $deppkg in
@@ -1514,7 +1545,7 @@ function add_deps_to_required() {
 		has_revdepend $cpv "" "$required" && return
 	fi
 	echo "$cpv" >> $temp_dir/required
-	if [[ "$opt_arg_for_emerge" ]]; then echo "=${cpv}"
+	if [[ "$opt_arg_for_emerge" ]]; then format_atom_for_emerge "$cpv"
 	elif (( opt_arg_verbose > 0 )); then echo "$indent$(format_cpv $cpv)$(pads 43 "$indent$cpv")  $(format_depatom "$dep")"
 	else echo "$indent$(format_cpv $cpv)"; fi
 	[[ "$do_package_sizes" ]] && info_action_size $cpv
@@ -2293,7 +2324,7 @@ function rtnode() {
 		[[ "$deppkg" ]] || continue
 		if [[ "$opt_arg_for_emerge" ]]; then
 			# Flat atom list; skip non-atom sentinels.
-			[[ "$deppkg" == @(WORLD|SYSTEM|KERNEL) ]] || echo "=$deppkg"
+			[[ "$deppkg" == @(WORLD|SYSTEM|KERNEL) ]] || format_atom_for_emerge "$deppkg"
 		else echo "$deppkg $depatom $taint" | format_revdep "" "$indent  "; fi
 		if has "$deppkg" $rt_encountered; then
 			[[ "$forcircular" ]] || format_error <<<"circular dependency: $rt_encountered $deppkg" >&2
@@ -2392,7 +2423,7 @@ function info_action_depends() {
 			fi
 		fi
 		if [[ "$opt_arg_for_emerge" ]]; then
-			[[ "$f_cpv" ]] && echo "=$f_cpv"
+			[[ "$tcpv" ]] && format_atom_for_emerge "$tcpv"
 		else
 			echo "    $(format_taint $cpv ${taint})$(pads 16 "$taint")$(format_depatom ${depatom})$(pads 24 "${taint:16}${depatom}") $f_cpv"
 		fi
@@ -2885,7 +2916,7 @@ function info_action_owners_match() {
 \|dir ${rx}" ${VARDB_DIR}/*/*/CONTENTS | while read x ; do
 			x=${x#${VARDB_DIR}/}; x=${x%/CONTENTS}
 			if [[ "$opt_arg_for_emerge" ]]; then
-				echo "=$x"
+				format_atom_for_emerge "$x"
 			else
 				echo -n "    "; format_cpv $x
 			fi
