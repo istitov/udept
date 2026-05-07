@@ -71,18 +71,35 @@ fake_install() {
 }
 
 @test "format_atom_for_emerge: --full-atoms with SLOT but no repository file omits ::repo" {
-	# Installed package missing its 'repository' file (older portage).
-	# best_tree falls through (no portage_trees populated in unit tests),
-	# so the ::repo suffix is dropped.
+	# Installed package missing its 'repository' file (older portage),
+	# and portage_trees is empty so best_tree has nothing to match.
+	# The ::repo suffix is dropped.
 	fake_install 'cat/pkg-1.0' '0'
 	opt_arg_full_atoms=1
 	result="$(format_atom_for_emerge 'cat/pkg-1.0' 2>/dev/null)"
 	assert_equal "$result" '=cat/pkg-1.0:0'
 }
 
+@test "format_atom_for_emerge: --full-atoms falls back to best_tree+repo_loc for repo lookup" {
+	# Older-portage layout: vardb has SLOT but no 'repository' file.
+	# Reach the second resolution path: walk portage_trees with
+	# best_tree, then reverse-map the matching tree path back through
+	# repo_loc[] to recover the repo name.
+	fake_install 'cat/pkg-1.0' '0'
+	mkdir -p "$BATS_TEST_TMPDIR/overlay/cat/pkg"
+	: >"$BATS_TEST_TMPDIR/overlay/cat/pkg/pkg-1.0.ebuild"
+	portage_trees="$BATS_TEST_TMPDIR/overlay"
+	declare -gA repo_loc=([my_overlay]="$BATS_TEST_TMPDIR/overlay")
+	opt_arg_full_atoms=1
+	result="$(format_atom_for_emerge 'cat/pkg-1.0' 2>/dev/null)"
+	assert_equal "$result" '=cat/pkg-1.0:0::my_overlay'
+}
+
 @test "format_atom_for_emerge: --full-atoms with no vardb entry omits :slot and ::repo" {
 	# slot_for/extract_var fail (no vardb dir, no portage_trees), best_tree
-	# fails. Stderr noise is swallowed; stdout is just the bare atom.
+	# fails (its $PORTDIR fallback is empty here, so 'tree' stays unset and
+	# the repo_loc[] reverse-map loop is skipped). Stderr noise is
+	# swallowed; stdout is just the bare atom.
 	opt_arg_full_atoms=1
 	result="$(format_atom_for_emerge 'cat/never-installed-1.0' 2>/dev/null)"
 	assert_equal "$result" '=cat/never-installed-1.0'

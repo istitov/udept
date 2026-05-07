@@ -31,6 +31,15 @@ load "$(_udept_find_bats_helper bats-assert)"
 #     not '*/dep', so the two `[[ "$0" == */dep ]]` guards in the script
 #     don't fire — main() is not called and load_portage_config / portageq
 #     are not invoked at source time.
+#
+# Test isolation note: bats spawns a fresh bash subprocess per @test, so
+# the script-level 'temp_dir="$(mktemp ...)"' on dep.in:537 produces a
+# distinct temp_dir per test. memoise() caches into $temp_dir, so cached
+# results from one test don't leak into another even though several
+# tested helpers (best_tree, world_sets_expand, resolve_depatom, ...) are
+# memoised. If bats ever shares a process across tests, that isolation
+# breaks and tests using fixtures will need to clear $temp_dir/<fn>/
+# explicitly in setup().
 load_dep() {
 	set --
 	# bats runs with set -e; dep.in uses '((counter++))' patterns that
