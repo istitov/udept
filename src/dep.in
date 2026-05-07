@@ -716,6 +716,12 @@ function format_revdep() {
 	ndeps=0
 	while read deppkg depatom taint; do
 		((++ndeps))
+		if [[ "$opt_arg_for_emerge" ]]; then
+			# Flat atom list for piping into emerge; skip non-atom
+			# sentinels (WORLD/SYSTEM/KERNEL).
+			[[ "$deppkg" == @(WORLD|SYSTEM|KERNEL) ]] || echo "=$deppkg"
+			continue
+		fi
 		case $deppkg in
 			WORLD )
 			echo "$indent${BL}$(pad 35 "WORLD FILE")${NO}  $(format_depatom ${depatom} ${asvirtual})";;
@@ -1508,7 +1514,7 @@ function add_deps_to_required() {
 		has_revdepend $cpv "" "$required" && return
 	fi
 	echo "$cpv" >> $temp_dir/required
-	if [[ "$opt_arg_for_emerge" ]]; then echo "${indent}=${cpv}"
+	if [[ "$opt_arg_for_emerge" ]]; then echo "=${cpv}"
 	elif (( opt_arg_verbose > 0 )); then echo "$indent$(format_cpv $cpv)$(pads 43 "$indent$cpv")  $(format_depatom "$dep")"
 	else echo "$indent$(format_cpv $cpv)"; fi
 	[[ "$do_package_sizes" ]] && info_action_size $cpv
@@ -2285,7 +2291,9 @@ function rtnode() {
 	# then have depclean remove it
 	while read deppkg depatom taint; do
 		[[ "$deppkg" ]] || continue
-		if [[ "$opt_arg_for_emerge" ]]; then echo "$indent  $deppkg"
+		if [[ "$opt_arg_for_emerge" ]]; then
+			# Flat atom list; skip non-atom sentinels.
+			[[ "$deppkg" == @(WORLD|SYSTEM|KERNEL) ]] || echo "=$deppkg"
 		else echo "$deppkg $depatom $taint" | format_revdep "" "$indent  "; fi
 		if has "$deppkg" $rt_encountered; then
 			[[ "$forcircular" ]] || format_error <<<"circular dependency: $rt_encountered $deppkg" >&2
