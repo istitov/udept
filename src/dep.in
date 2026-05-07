@@ -14,6 +14,15 @@ VERSION="@PACKAGE_VERSION@"
 TAG="@PACKAGE_TAG@"
 DESCRIPTION="List dependencies and reverse dependencies of packages, and clean the world file and the set of installed packages."
 
+# Need bash 4.2+ for `declare -gA` (used by read_repos_config), nameref-ish
+# patterns, and various ${var//pat/repl} forms. Fail clearly rather than
+# producing garbage on bash 3 (still default on macOS, some BSDs).
+if (( BASH_VERSINFO[0] < 4 \
+      || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] < 2) )); then
+	echo "$0: needs bash >= 4.2 (have ${BASH_VERSION})" >&2
+	exit 1
+fi
+
 shopt -s extglob
 
 spaces="                                                                                "
@@ -1700,12 +1709,10 @@ function cd_is_in_use() {
 }
 
 function resdepend() {
-	cpv=$1
-	ordeps="$2"
+	local cpv="$1" ordeps="$2"
 	set_xterm_title "Calculating dependencies of: $cpv"
-	taint=""
-	taint_for_ifno=""
-	raw_depends $cpv | crunch_depends "$cpv" "$ordeps" | sort -u
+	# (No taint reset here — crunch_depends declares its own local taint.)
+	raw_depends "$cpv" | crunch_depends "$cpv" "$ordeps" | sort -u
 }
 # pruneworld / depclean walk the same package's deps repeatedly across
 # different needles; memoising resdepend cuts each second-and-later call
@@ -2892,14 +2899,21 @@ function info_action_catpackages() {
 # List packages providing the specified virtual. With the modern virtual/*
 # model, providers are bare cps named in the virtual's RDEPEND/DEPEND, so
 # there are no per-provider version operators to honour — we just print the
-# provider name and its installed/available mlsrs (highest first).
+# provider name and its installed/available mlsrs. Default mode shows
+# installed-only mlsrs; --uninstalled also folds in available versions.
 function info_action_virtuals() {
 	set_xterm_title "Displaying packages providing $1"
 	local cpv="$1" cp="${1%-$VER_SHPAT}" virtual providers provider mlsrs mlsr
 	allvirtuals | while read virtual providers; do
 		[[ "$virtual" == "$cp" ]] || continue
 		for provider in $providers; do
-			mlsrs="$(provided_mlsrs "$provider" | sort -u | mlsr_sort)"
+			if [[ "$opt_arg_uninstalled" ]]; then
+				mlsrs="$( ( provided_mlsrs "$provider"
+				            avail_versions "$provider" "" "" yes yes
+				          ) | sort -u | mlsr_sort)"
+			else
+				mlsrs="$(provided_mlsrs "$provider" | sort -u | mlsr_sort)"
+			fi
 			if [[ "$mlsrs" ]]; then
 				echo -n $'\t'"${BR}$(pad 35 $provider)${NO}"
 				for mlsr in $mlsrs; do echo -n " $mlsr"; done

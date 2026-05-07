@@ -77,10 +77,18 @@ PN_PORTAGE=portage
 PN_BASH=bash
 PN_PYTHON=python
 
-# A file path likely owned by something. Pick the bash binary's canonical
-# location so we don't get confused by /usr-merge symlinks (those are not
-# recorded in CONTENTS — phase 7 polish will teach owners about realpath).
-OWNED_FILE=$(readlink -f /bin/bash 2>/dev/null || echo /bin/bash)
+# A file path likely owned by something. We deliberately pick the LITERAL
+# /usr/bin/bash form (not readlink -f resolved) so on a usr-merge system
+# this exercises phase 7's alt-prefix / realpath fallback in
+# info_action_owners — CONTENTS records /bin/bash, the caller asks
+# /usr/bin/bash, the fallback should bridge the two.
+if [[ -e /usr/bin/bash ]]; then
+	OWNED_FILE=/usr/bin/bash
+elif [[ -e /bin/bash ]]; then
+	OWNED_FILE=/bin/bash
+else
+	OWNED_FILE=$(command -v bash || echo /bin/bash)
+fi
 
 printf 'udept smoke harness — %s\n' "$(date -u +%FT%TZ)"
 printf 'dep version: '; "$DEP" --colour=no --version | head -1
@@ -109,14 +117,16 @@ run 'info/portage'            -i "$PORTAGE"
 run 'contents/portage'        -f "$PORTAGE"
 run 'category/portage'        -c "$PN_PORTAGE"
 run 'catpackages/sys-apps'    -C sys-apps
-run 'changelog/portage'       -j "$PN_PORTAGE" 3
+run 'changelog/portage'       --changelog=3 "$PN_PORTAGE"
 run 'usedesc/portage'         -u "$PORTAGE"
 run 'iuse/python'             -U python
 run 'size/portage'            -z "$PORTAGE"
 run 'search/portage'          -g portage
 run 'owners/file'             -F "$OWNED_FILE"
 
-# --- Virtuals (currently broken — captures pre-fix behaviour) -----------
+# --- Virtuals -----------------------------------------------------------
+# Strip the trailing -<version> off the cpv we picked from /var/db/pkg
+# (e.g. virtual/editor-0-r7 -> virtual/editor) so -R sees a bare cp.
 [[ "$VIRTUAL_EDITOR" ]] && run 'virtuals/editor' -R "${VIRTUAL_EDITOR%-[0-9]*}"
 [[ "$VIRTUAL_LIBC" ]]   && run 'virtuals/libc'   -R "${VIRTUAL_LIBC%-[0-9]*}"
 run 'provides/portage'        -r "$PORTAGE"
