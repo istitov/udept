@@ -44,35 +44,35 @@ _dep_completion() {
 	c="'"${COMP_WORDS[$COMP_CWORD]}"'"
 	if [[ "$c" == */* ]]; then 
 		for x in $portage_trees; do	for y in $x/$c*; do [[ -d "$y" ]] || continue; echo "${y#$x/}"; done; done
-		for x in /var/db/pkg/$c*; do [[ -d "$x" ]] || continue; x=${x%-$VER_SHPAT}; echo ${x#/var/db/pkg/}; done	
+		for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; x=${x%-$VER_SHPAT}; echo ${x#${VARDB_DIR}/}; done	
 	else 
 		for x in $portage_trees; do for y in $x/*/$c*; do [[ -d "$y" ]] || continue; echo "${y##*/}"; done; done
-		for x in /var/db/pkg/*/$c*; do [[ -d "$x" ]] || continue; x=${x%-$VER_SHPAT}; echo ${x##*/}; done	
+		for x in ${VARDB_DIR}/*/$c*; do [[ -d "$x" ]] || continue; x=${x%-$VER_SHPAT}; echo ${x##*/}; done	
 	fi; exit 0'));;
 		PACKAGE) 
 			COMPREPLY=("${COMPREPLY[@]}" $(dep --exec '
 	c="'"${COMP_WORDS[$COMP_CWORD]}"'"; cn=${c%-$VER_SHPAT}
 	if [[ "$c" == */*-$VER_SHPAT ]]; then 
 		for x in $portage_trees; do for y in $x/$cn/${c#*/}*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; echo $cn-${y#${cn}-}; done; done
-		for x in /var/db/pkg/$c*; do [[ -d "$x" ]] || continue; echo ${x#/var/db/pkg/}; done	
+		for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done	
 	elif [[ "$c" == */* ]]; then 
 		for x in $portage_trees; do for y in $x/$cn*/${c#*/}*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; y=${y#$x/}; echo ${y%%/*}/${y##*/}; done; done
-		for x in /var/db/pkg/$c*; do [[ -d "$x" ]] || continue; echo ${x#/var/db/pkg/}; done	
+		for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done	
 	elif [[ "$c" == *-$VER_SHPAT ]]; then 
 		for x in $portage_trees; do for y in $x/*/$cn/$c*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; y=${y#$x/}; echo ${y%%/*}/${y##*/}; done; done
-		for x in /var/db/pkg/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
+		for x in ${VARDB_DIR}/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
 	else 
 		for x in $portage_trees; do for y in $x/*/$cn*/$c*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; y=${y#$x/}; echo ${y%%/*}/${y##*/}; done; done
-		for x in /var/db/pkg/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
+		for x in ${VARDB_DIR}/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
 	fi; exit 0'));;
 		CATEGORY) COMPREPLY=("${COMPREPLY[@]}" $(compgen -W "$(dep --exec 'echo $categories; exit 0')" -- "${COMP_WORDS[$COMP_CWORD]}"));;
 		XPACKAGE)
 			COMPREPLY=("${COMPREPLY[@]}" $(dep --exec '
 	c="'"${COMP_WORDS[$COMP_CWORD]}"'"; cn=${c%-$VER_SHPAT}
 	if [[ "$c" == */* ]]; then 
-		for x in /var/db/pkg/$c*; do [[ -d "$x" ]] || continue; echo ${x#/var/db/pkg/}; done	
+		for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done	
 	else 
-		for x in /var/db/pkg/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
+		for x in ${VARDB_DIR}/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
 	fi; exit 0'));;
 		FILE) COMPREPLY=("${COMPREPLY[@]}" $(compgen -f -- "${COMP_WORDS[$COMP_CWORD]}"));;
 		DIRECTORY) COMPREPLY=("${COMPREPLY[@]}" $(compgen -d -- "${COMP_WORDS[$COMP_CWORD]}"));;
@@ -82,19 +82,19 @@ _dep_completion() {
 	c="'"${COMP_WORDS[$COMP_CWORD]}"'"; cn=${c%-$VER_SHPAT}
 	if [[ "$c" == */*-$VER_SHPAT ]]; then 
 		for x in $portage_trees; do for y in $x/$cn/${c#*/}*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; echo $cn-${y#${cn}-}; done; done
-		for x in /var/db/pkg/$c*; do [[ -d "$x" ]] || continue; echo ${x#/var/db/pkg/}; done	
+		for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done	
 		allvirtuals | while read v; do [[ "$v" == "$cn" ]] && echo "$c"; done
 	elif [[ "$c" == */* ]]; then 
 		for x in $portage_trees; do for y in $x/$cn*/${c#*/}*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; y=${y#$x/}; echo ${y%%/*}/${y##*/}; done; done
-		for x in /var/db/pkg/$c*; do [[ -d "$x" ]] || continue; echo ${x#/var/db/pkg/}; done
+		for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done
 		allvirtuals | while read v; do [[ "$v" == "$c"* ]] && echo "$v"; done
 	elif [[ "$c" == *-$VER_SHPAT ]]; then 
 		for x in $portage_trees; do for y in $x/virtual/$cn/$c*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; y=${y#$x/}; echo ${y%%/*}/${y##*/}; done; done
-		for x in /var/db/pkg/virtual/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done
+		for x in ${VARDB_DIR}/virtual/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done
 		allvirtuals | while read v; do [[ "$v" == "virtual/$cn" ]] && echo "$c"; done
 	else 
 		for x in $portage_trees; do for y in $x/virtual/$cn*/$c*.ebuild; do [[ -e "$y" ]] || continue; y=${y%.ebuild}; y=${y#$x/}; echo ${y%%/*}/${y##*/}; done; done
-		for x in /var/db/pkg/virtual/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
+		for x in ${VARDB_DIR}/virtual/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done	
 		allvirtuals | while read v; do [[ "$v" == "virtual/$c"* ]] && echo "${v#virtual/}"; done
 	fi; exit 0'));;
 		USE) COMPREPLY=("${COMPREPLY[@]}" $(dep --exec '

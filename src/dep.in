@@ -28,28 +28,46 @@ shopt -s extglob
 spaces="                                                                                "
 spaces="${spaces:0:${COLUMNS:=80}}"
 
-# Resolve the install prefix once. EROOT is the configured root (default '/');
-# EPREFIX is the host-prefix path for Gentoo Prefix installs (default ''). All
-# subsequent path constants are derived from these so dep works correctly in
-# Prefix and chroot deployments, not just the typical EROOT=/ case.
-if command -v portageq >/dev/null 2>&1; then
-	eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
-fi
-EPREFIX="${EPREFIX:-}"
-EROOT="${EROOT:-/}"
-# Strip trailing slash so concatenation with leading-slash paths gives one /.
-EROOT="${EROOT%/}"
-EPREFIX="${EPREFIX%/}"
-
-VARDB_DIR="${EROOT}/var/db/pkg"
-EDB_DIR="${EROOT}/var/cache/edb"
-PORTAGE_LIB_DIR="${EROOT}/var/lib/portage"
-PORTAGE_LOG_DIR="${EROOT}/var/log/portage"
-ETC_PORTAGE_DIR="${EPREFIX}/etc/portage"
-
+# Path constants default to the standard EROOT=/ EPREFIX='' layout so the
+# usage/version/help short-circuits don't have to call portageq just to
+# print text. resolve_eroot_paths (below) reruns the assignments after
+# asking portageq about the real EROOT/EPREFIX — the result is identical
+# for /-rooted setups but correct on Gentoo Prefix and chroot.
+EPREFIX=""
+EROOT=""
+VARDB_DIR="/var/db/pkg"
+EDB_DIR="/var/cache/edb"
+PORTAGE_LIB_DIR="/var/lib/portage"
+PORTAGE_LOG_DIR="/var/log/portage"
+ETC_PORTAGE_DIR="/etc/portage"
 WORLD_FILE="${PORTAGE_LIB_DIR}/world"
 WORLD_SETS_FILE="${PORTAGE_LIB_DIR}/world_sets"
 ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
+
+# Called from main() after the help/version/usage short-circuit so a
+# trivial 'dep --version' doesn't pay portageq's ~150ms startup.
+function resolve_eroot_paths() {
+	# Fast path for the standard /-rooted layout — the defaults at the
+	# top of the script are already correct, and we save a portageq
+	# round-trip per invocation. The directory check is cheap.
+	[[ -d /var/db/pkg && ! "${PORTAGE_OVERRIDE_EPREFIX:-}" ]] && return
+	if command -v portageq >/dev/null 2>&1; then
+		eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
+	fi
+	EPREFIX="${EPREFIX:-}"; EPREFIX="${EPREFIX%/}"
+	EROOT="${EROOT:-/}";   EROOT="${EROOT%/}"
+	# When EROOT and EPREFIX are both empty (the standard / layout), the
+	# defaults above are already correct — nothing to do.
+	[[ -z "$EROOT" && -z "$EPREFIX" ]] && return
+	VARDB_DIR="${EROOT}/var/db/pkg"
+	EDB_DIR="${EROOT}/var/cache/edb"
+	PORTAGE_LIB_DIR="${EROOT}/var/lib/portage"
+	PORTAGE_LOG_DIR="${EROOT}/var/log/portage"
+	ETC_PORTAGE_DIR="${EPREFIX}/etc/portage"
+	WORLD_FILE="${PORTAGE_LIB_DIR}/world"
+	WORLD_SETS_FILE="${PORTAGE_LIB_DIR}/world_sets"
+	ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
+}
 
 function help_fmt() {
 	PLUSMINUS="$(iconv -c -f UTF-8 <<<$'\xc2\xb1')" || PLUSMINUS="+-"
@@ -3684,7 +3702,10 @@ function overlay_clean() {
 	fi
 }
 
-function main() { 
+function main() {
+	# All real actions need the install-prefix paths, even owners (which
+	# otherwise skips load_portage_config to save the heavier setup).
+	resolve_eroot_paths
 	if [[ "$load_config" ]]; then
 		set_xterm_title "Loading Portage configuration..."
 		load_portage_config
