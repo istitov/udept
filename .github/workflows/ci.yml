@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main, modernization]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: gentoo/stage3 — build + bats + smoke
+    runs-on: ubuntu-latest
+    container:
+      image: gentoo/stage3:latest
+
+    steps:
+      # actions/checkout's runner needs node + git inside the container;
+      # stage3 ships neither, so emerge them from the binhost. Disable
+      # binpkg signature verification first — modern stage3 ships getuto
+      # to set up the verifying keyring, but if that's missing or fails,
+      # --getbinpkg silently falls through to source builds and net-libs/
+      # nodejs from source OOMs the runner. The binhost is fetched over
+      # HTTPS regardless; for CI use, the signing layer is acceptable to
+      # drop. This applies to all later emerges too (it's in make.conf).
+      - name: Bootstrap container (git + node for actions/checkout)
+        run: |
+          cat >>/etc/portage/make.conf <<'EOF'
+
+          # CI: skip binpkg signature verification (avoids hard
+          # dependence on getuto / keyring being pre-configured).
+          FEATURES="${FEATURES} -binpkg-signing -binpkg-request-signature"
+          EOF
+          emerge --quiet-build --usepkg=y --getbinpkg=y \
+            dev-vcs/git net-libs/nodejs
+
+      # The workspace is bind-mounted from a different uid; git refuses to
+      # operate on it without an explicit safe.directory entry. Use --system
+      # so the entry is readable by the 'portage' user too — the merge step
+      # below clones the workspace via file:// and that runs userpriv'd.
+      - name: Trust workspace for git ownership check
+        run: git config --system --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+
+      # The stuff overlay hosts both the live udept-9999.ebuild (used by
+      # the post-build merge step) and the bats-support / bats-assert
+      # helpers (which aren't in ::gentoo). Configure it directly via
+      # repos.conf — `eselect repository` would require emerging
+      # app-eselect/eselect-repository first, which isn't in @system.
+      - name: Add stuff overlay
+        run: |
+          mkdir -p /etc/portage/repos.conf
+          cat >/etc/portage/repos.conf/stuff.conf <<'EOF'
+          [stuff]
+          location = /var/db/repos/stuff
+          sync-type = git
+          sync-uri = https://github.com/istitov/stuff
+          auto-sync = yes
+          EOF
+          emaint sync -r stuff
+
+      - name: Install autotools + bats stack
+        run: |
+          emerge --quiet-build --usepkg=y --getbinpkg=y \
+            sys-devel/autoconf sys-devel/automake \
+            dev-util/bats dev-util/bats-support dev-util/bats-assert
+
+      - name: autoreconf -i
+        run: autoreconf -i
+
+      - name: configure
+        run: ./configure
+
+      - name: build
+        run: make -j"$(nproc)"
+
+      - name: bats unit suite
+        run: make check
+
+      - name: dist tarball sanity-check
+        run: make dist
+
+      # smoke.sh picks packages from the container's /var/db/pkg and runs
+      # the dep action battery. stage3's install set differs from a real
+      # system, so this is a 'doesn't crash' check, not a baseline diff.
+      - name: smoke harness (in-tree binary)
+        run: tests/smoke.sh
+
+      # Real ebuild merge path. Rewrites the live ebuild's EGIT_REPO_URI
+      # to fetch from the CI workspace instead of origin/main (so the
+      # merge tests this branch's code, not master), and emerges. Catches
+      # autotools install-path regressions, ebuild USE-flag wiring,
+      # bash-completion install location, etc. — none of which 'make
+      # check' touches.
+      - name: emerge =app-portage/udept-9999 (real merge path)
+        env:
+          ACCEPT_KEYWORDS: "**"
+          FEATURES: "-sandbox -usersandbox -ipc-sandbox -network-sandbox"
+        run: |
+          overlay=$(portageq get_repo_path / stuff)
+          ebuild="$overlay/app-portage/udept/udept-9999.ebuild"
+          [[ -f "$ebuild" ]] || { echo "expected $ebuild in stuff overlay"; exit 1; }
+          sed -i 's|EGIT_REPO_URI="[^"]*"|EGIT_REPO_URI="file://'"$GITHUB_WORKSPACE"'"|' "$ebuild"
+          # Verify the sed actually rewrote — if the live ebuild's format
+          # ever changes (multi-line URI, different quoting), the sed
+          # silently no-ops and we'd test origin/master not this branch.
+          grep -q 'EGIT_REPO_URI="file://' "$ebuild" \
+            || { echo "EGIT_REPO_URI rewrite did not take effect; check $ebuild format"; exit 1; }
+
+          # git 2.38+ disabled file:// transport by default (CVE-2022-39253);
+          # the live ebuild's git-r3 fetch needs it for the workspace clone.
+          # Use --system, not --global: emerge runs ebuild phases as the
+          # 'portage' user (FEATURES=userpriv), which reads /etc/gitconfig
+          # but not /root/.gitconfig.
+          git config --system protocol.file.allow always
+
+          emerge --quiet-build --usepkg=y --getbinpkg=y =app-portage/udept-9999
+
+      - name: post-merge sanity (installed binary)
+        run: |
+          command -v dep
+          dep --version
+          dep --help | head -3
