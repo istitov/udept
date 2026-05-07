@@ -3092,9 +3092,33 @@ function userquery() {
 
 function install_new_file() {
 	local new="$1" target="$2"
-	[[ "$(whoami)" == "root" ]] || echo "Please enter your root password or Ctrl+C, Enter to cancel."
+	# Already root: no privilege escalation needed.
+	if (( EUID == 0 )); then
+		cat -- "$new" >"$target"
+		return $?
+	fi
+	# Build a safely-quoted command for the elevation tool (printf %q
+	# defends against paths that contain spaces, quotes, $-substitutions,
+	# command substitutions, etc.). Prefer sudo when it's available; fall
+	# back to su.
+	local quoted_new quoted_target cmd
+	quoted_new=$(printf '%q' "$new")
+	quoted_target=$(printf '%q' "$target")
+	cmd="cat -- $quoted_new >$quoted_target"
+	local elevate
+	if command -v doas >/dev/null 2>&1; then
+		elevate=( doas sh -c )
+	elif command -v sudo >/dev/null 2>&1; then
+		elevate=( sudo sh -c )
+	elif command -v su >/dev/null 2>&1; then
+		echo "Please enter your root password or Ctrl+C, Enter to cancel."
+		elevate=( su -c )
+	else
+		format_error >&2 <<<"no doas/sudo/su found; cannot install '$target' as root"
+		return 1
+	fi
 	while :; do
-		su -c 'cat "'"${new}"'" >"'"${target}"'"'
+		"${elevate[@]}" "$cmd"
 		case $? in
 			0) return 0;;
 			1) continue;;
