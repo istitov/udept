@@ -594,7 +594,14 @@ function memoise() {
 			cat \"\$x\" 2>&-
 		else
 			__memoised__$1 \"\$@\" | tee \"\$x\"
-			RETVAL=\${PIPESTATUS[0]}; ((RETVAL == 0)) || rm \"\$x\"
+			# Both the inner function and tee must succeed; otherwise the
+			# cache file may be partial (or empty) and would shortcut every
+			# subsequent call to the wrong answer. Capture both statuses
+			# in one go because any simple command (incl. assignment) resets
+			# PIPESTATUS.
+			local pstatus=( \"\${PIPESTATUS[@]}\" )
+			RETVAL=\${pstatus[0]}
+			((RETVAL == 0 && pstatus[1] == 0)) || rm \"\$x\"
 		fi
 		trap - SIGPIPE
 		return \$RETVAL
@@ -3124,7 +3131,10 @@ function install_new_file() {
 }
 
 function filter_world() {
-	# TODO gettextise this baby!
+	# Operates only on /var/lib/portage/world (atom entries). The companion
+	# /var/lib/portage/world_sets file (set references like @kde-meta) is
+	# user-curated; pruneworld doesn't touch it. world_sets *contents* still
+	# count as "WORLD" in revdep walks, see _smartdep_nopv.
 	cat ${WORLD_FILE} \
 	| sort \
 	| tee $temp_dir/oldworld \
