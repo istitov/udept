@@ -28,9 +28,28 @@ shopt -s extglob
 spaces="                                                                                "
 spaces="${spaces:0:${COLUMNS:=80}}"
 
-WORLD_FILE="/var/lib/portage/world"
-WORLD_SETS_FILE="/var/lib/portage/world_sets"
-ETC_PORTAGE_SETS_DIR="/etc/portage/sets"
+# Resolve the install prefix once. EROOT is the configured root (default '/');
+# EPREFIX is the host-prefix path for Gentoo Prefix installs (default ''). All
+# subsequent path constants are derived from these so dep works correctly in
+# Prefix and chroot deployments, not just the typical EROOT=/ case.
+if command -v portageq >/dev/null 2>&1; then
+	eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
+fi
+EPREFIX="${EPREFIX:-}"
+EROOT="${EROOT:-/}"
+# Strip trailing slash so concatenation with leading-slash paths gives one /.
+EROOT="${EROOT%/}"
+EPREFIX="${EPREFIX%/}"
+
+VARDB_DIR="${EROOT}/var/db/pkg"
+EDB_DIR="${EROOT}/var/cache/edb"
+PORTAGE_LIB_DIR="${EROOT}/var/lib/portage"
+PORTAGE_LOG_DIR="${EROOT}/var/log/portage"
+ETC_PORTAGE_DIR="${EPREFIX}/etc/portage"
+
+WORLD_FILE="${PORTAGE_LIB_DIR}/world"
+WORLD_SETS_FILE="${PORTAGE_LIB_DIR}/world_sets"
+ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
 
 function help_fmt() {
 	PLUSMINUS="$(iconv -c -f UTF-8 <<<$'\xc2\xb1')" || PLUSMINUS="+-"
@@ -767,10 +786,10 @@ function profile_files() {
 
 function etc_portage_files() {
 	name="$1"
-	if [[ -d "/etc/portage/$name" ]]; then
-		find "/etc/portage/$name" -type f -readable
-	elif [[ -r "/etc/portage/$name" ]]; then
-		echo "/etc/portage/$name"
+	if [[ -d "$ETC_PORTAGE_DIR/$name" ]]; then
+		find "$ETC_PORTAGE_DIR/$name" -type f -readable
+	elif [[ -r "$ETC_PORTAGE_DIR/$name" ]]; then
+		echo "$ETC_PORTAGE_DIR/$name"
 	fi
 }
 
@@ -816,7 +835,7 @@ function read_repos_config() {
 				*/priority)		repo_prio[$section]="$v";;
 			esac;;
 		esac
-	done < <(portageq repos_config / 2>/dev/null)
+	done < <(portageq repos_config "${EROOT:-/}/" 2>/dev/null)
 	if [[ -z "$main_repo" || -z "${repo_loc[$main_repo]:-}" ]]; then
 		echo "load_portage_config: portageq repos_config / failed or missing main-repo" \
 			| format_error >&2
@@ -844,8 +863,8 @@ function load_portage_config() {
 	read_repos_config
 	# Walk the profile stack after repo_loc is populated so cross-repo
 	# `<repo>:<path>` parent entries can be resolved.
-	[[ -h "/etc/portage/make.profile" ]] && profile_stack="$(profile_stack_read /etc/portage/profile .
-		profile_stack_read /etc/portage/make.profile .)"
+	[[ -h "$ETC_PORTAGE_DIR/make.profile" ]] && profile_stack="$(profile_stack_read "$ETC_PORTAGE_DIR/profile" .
+		profile_stack_read "$ETC_PORTAGE_DIR/make.profile" .)"
 	# Round 1: the static set of vars we always want plus USE_EXPAND, which
 	# we need read first so we can ask for its expansions in round 2.
 	eval "$(portageq envvar -v \
@@ -1007,10 +1026,10 @@ function strip_iuse_prefixes() {
 
 function extract_var_from_vardb() {
 	local name="$1" cpv="$2"
-	if [[ "$name" && -e /var/db/pkg/$cpv/$name ]]; then
-		cat /var/db/pkg/$cpv/$name
-	elif [[ -e "/var/db/pkg/${cpv}/environment.bz2" ]]; then
-		bunzip2 -c "/var/db/pkg/${cpv}/environment.bz2" \
+	if [[ "$name" && -e ${VARDB_DIR}/$cpv/$name ]]; then
+		cat ${VARDB_DIR}/$cpv/$name
+	elif [[ -e "${VARDB_DIR}/${cpv}/environment.bz2" ]]; then
+		bunzip2 -c "${VARDB_DIR}/${cpv}/environment.bz2" \
 			| sed 's!^'"${name}"'=!!;t;d'
 	fi
 }
@@ -1040,14 +1059,14 @@ function extract_var_from_edb() {
 
 function extract_var() {
 	local name="$1" cpv="$2" tree="$3"
-	if [[ "$opt_arg_original_depends" && -d /var/db/pkg/$cpv ]]; then
+	if [[ "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
 	elif [[ "$tree" && -f "$tree/metadata/md5-cache/$cpv" ]]; then
 		extract_var_from_edb "$name" "$tree" "$cpv"
 	elif [[ -z "$tree" ]] && newtree="$(best_tree $cpv)" \
 			&& [[ -f "$newtree/metadata/md5-cache/$cpv" ]]; then
 		extract_var "$name" "$cpv" "$newtree"
-	elif [[ -d /var/db/pkg/$cpv ]]; then
+	elif [[ -d ${VARDB_DIR}/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
 	else
 		format_error <<<"failed extract_var $* :: ${FUNCNAME[@]}" >&2
@@ -1146,7 +1165,7 @@ function autouse() {
 	kill_comments_and_blanks $(profile_files use.defaults) \
 	| while read use packages; do 
 		for package in $packages; do
-			[[ -z "${package}" || -d /var/db/pkg/${package} || -d $(car /var/db/pkg/${package}-$VER_SHPAT) ]] && echo $use
+			[[ -z "${package}" || -d ${VARDB_DIR}/${package} || -d $(car ${VARDB_DIR}/${package}-$VER_SHPAT) ]] && echo $use
 		done
 	done | tac
 	set_xterm_title "Calculating auto USE flags... done"
@@ -1184,7 +1203,7 @@ function usecomponent() {
 		env.d);;
 		repo);;
 		pkginternal) [[ "$cpv" ]] && pkginternal_use_for "$cpv";;
-		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' /etc/portage/profile.env;;
+		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' "$ETC_PORTAGE_DIR/profile.env";;
 		features|repo);;  # TODO phase 4: implement FEATURES-forced and per-repo USE
 		*) format_error <<<"Unknown USE component: $component" >&2;;
 	esac
@@ -1192,8 +1211,8 @@ function usecomponent() {
 
 function dbuse() {
 	local cpv=$1
-	if [[ "$cpv" && "$opt_arg_original_depends" && -d /var/db/pkg/$cpv ]]; then
-		sed -e 's/[[:space:]]\+/\n/g' /var/db/pkg/$cpv/USE
+	if [[ "$cpv" && "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
+		sed -e 's/[[:space:]]\+/\n/g' ${VARDB_DIR}/$cpv/USE
 	else
 		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults:pkginternal:env.d"
 		(
@@ -1332,7 +1351,7 @@ function mlsr_sort() {
 function has_version() {
 	pkgspec="$1"
 	if [[ "$pkgspec" == virtual/* ]]; then
-		grep -q "${pkgspec}" /var/db/pkg/*/*/PROVIDE
+		grep -q "${pkgspec}" ${VARDB_DIR}/*/*/PROVIDE
 		return
 	fi
 	# (<|<=|=|~|>=|>)?category/package(-version)?*?
@@ -1346,20 +1365,20 @@ function has_version() {
 		*)    vs="";;
 	esac
 	case "$vs" in
-		=) arr=( /var/db/pkg/$pkgspec )
+		=) arr=( ${VARDB_DIR}/$pkgspec )
 		[[ -d "${arr}" ]] && return 0 || return 1;;
-		\~) arr=( /var/db/pkg/${pkgspec}?(-r+([[:digit:]])) )
+		\~) arr=( ${VARDB_DIR}/${pkgspec}?(-r+([[:digit:]])) )
 		[[ -d "${arr}" ]] && return 0 || return 1;;
-		"") arr=( /var/db/pkg/${pkgspec}-$VER_SHPAT )
+		"") arr=( ${VARDB_DIR}/${pkgspec}-$VER_SHPAT )
 		[[ -d "${arr}" ]] && return 0 || return 1;;
 		*)
 		cp="${pkgspec/%-$VER_SHPAT}"
 		verstring_req="${pkgspec#${cp}-}"
-		avail=( /var/db/pkg/${cp}-$VER_SHPAT )
+		avail=( ${VARDB_DIR}/${cp}-$VER_SHPAT )
 		[[ -d "${avail}" ]] || return 1
 		[[ "${vs}" ]] || return 0
 		for inst in "${avail[@]}"; do
-			verstring_inst="${inst#/var/db/pkg/${cp}-}"
+			verstring_inst="${inst#${VARDB_DIR}/${cp}-}"
 			vercmp "${verstring_inst}" "$vs" "${verstring_req}" && return 0
 		done
 		return 1;;
@@ -1752,7 +1771,7 @@ memoise world_sets_expand
 function db_grep() {
 	local needle="$1" with_tree="$2" attr="$3" tree cpv
 	if [[ "$opt_arg_original_depends" ]]; then
-		find /var/db/pkg -name "$attr" \
+		find ${VARDB_DIR} -name "$attr" \
 		| xargs -r grep -l "${needle}" \
 		| cut -d/ -f5-6
 	elif [[ "$opt_arg_uninstalled" ]]; then
@@ -1763,7 +1782,7 @@ function db_grep() {
 			  grep -rl "${needle}" . 2>/dev/null \
 			  | while read cpv; do
 				[[ -e "${tree}/${cpv%-${VER_SHPAT}}/${cpv##*/}.ebuild" ]] \
-					|| [[ -d /var/db/pkg/${cpv} ]] \
+					|| [[ -d ${VARDB_DIR}/${cpv} ]] \
 					|| continue
 				[[ "$with_tree" ]] && echo "${cpv:2} ${tree}" || echo "${cpv:2}"
 			  done )
@@ -1772,11 +1791,11 @@ function db_grep() {
 		# Default: only installed packages. Grep their per-attribute vardb
 		# files directly — vardb dep files reflect what the package was
 		# actually installed with, which is the right answer for revdep.
-		find /var/db/pkg -mindepth 3 -maxdepth 3 \
+		find ${VARDB_DIR} -mindepth 3 -maxdepth 3 \
 			\( -name DEPEND -o -name RDEPEND -o -name BDEPEND \
 			   -o -name IDEPEND -o -name PDEPEND \) \
 		| xargs -r grep -l "${needle}" 2>/dev/null \
-		| sed -n 's!^/var/db/pkg/\([^/]*/[^/]*\)/.*!\1!p' \
+		| sed -n "s!^${VARDB_DIR}/\\([^/]*/[^/]*\\)/.*!\\1!p" \
 		| sort -u \
 		| while read cpv; do
 			if [[ "$with_tree" ]]; then
@@ -1848,7 +1867,7 @@ function _smartdep() {
 		# Also, if masked then all unmasked versions have higher 
 		# priority.
 		cands_="$cands"; cands=""
-		if ! [[ -d /var/db/pkg/$cpv ]]; then
+		if ! [[ -d ${VARDB_DIR}/$cpv ]]; then
 			cands="$cands_"
 		elif has $mlsr $versions; then for vmlsr in ${cands_}; do
 			vercmp $vmlsr ">=" $virtual_mlsr \
@@ -1860,7 +1879,7 @@ function _smartdep() {
 	else
 		unset $virtual_mlsr; unset $virtual_cpv
 		cands=""
-		if [[ ! -d /var/db/pkg/$cpv ]]; then for x in ${installed}; do
+		if [[ ! -d ${VARDB_DIR}/$cpv ]]; then for x in ${installed}; do
 			[[ $x != $mlsr ]] && ! has $x $cands \
 				&& cands="$cands $x"
 		done; elif has $mlsr $versions; then for x in ${installed}; do
@@ -2175,9 +2194,9 @@ function injected_mlsrs() {
 
 function installed_mlsrs() {
 	cp="$1"; remove_masked="$2"
-	for dir in /var/db/pkg/$cp-$VER_SHPAT; do
+	for dir in ${VARDB_DIR}/$cp-$VER_SHPAT; do
 		[[ -d "$dir" ]] || continue
-		mlsr=${dir#/var/db/pkg/${cp}-}
+		mlsr=${dir#${VARDB_DIR}/${cp}-}
 		if [[ "$remove_masked" ]]; then
 			is_package_masked $cp $mlsr && continue
 			is_keyword_masked $cp $mlsr && continue
@@ -2188,7 +2207,7 @@ function installed_mlsrs() {
 memoise installed_mlsrs
 
 function all_installed_cpvs() {
-	find /var/db/pkg -mindepth 2 -maxdepth 2 -type d \
+	find ${VARDB_DIR} -mindepth 2 -maxdepth 2 -type d \
 	| cut -c13- \
 	| sort
 }
@@ -2209,7 +2228,7 @@ function all_installed_cp_mlsrs() {
 
 function is_running_kernel() {
 	cpv=$1
-	[[ -d /var/db/pkg/$cpv ]] \
+	[[ -d ${VARDB_DIR}/$cpv ]] \
 		&& has virtual/linux-sources $(virtuals_from "${cpv%-$VER_SHPAT}") \
 		&& [[ "$(extract_var_from_vardb KV $cpv)" == "$(uname -r)" ]]
 }
@@ -2457,7 +2476,7 @@ function info_action_usedesc() {
 	set_xterm_title "Displaying USE flags for $1"
 	local cpv="$1"
 	local alluse="$(dbuse)" my_use=$(dbuse "$cpv") ouse=""
-	[[ -d /var/db/pkg/$cpv ]] && ouse=$(</var/db/pkg/$cpv/USE) || unset ouse
+	[[ -d ${VARDB_DIR}/$cpv ]] && ouse=$(<${VARDB_DIR}/$cpv/USE) || unset ouse
 	pusemask=$(package_use_mask "$cpv")
 	for x in $(extract_var IUSE $cpv | strip_iuse_prefixes | sed 's/[[:space:]]/\n/g' | sort -u)
 	do
@@ -2513,7 +2532,7 @@ function info_action_info() {
 	local pr=${pv#$p-}; [[ "$pr" == "$pv" ]] && pr="r0"
 	local slot="$(slot_for "$cpv")"
 	local patches=()
-	for d in /etc/portage/patches/$cat/$pn*; do
+	for d in $ETC_PORTAGE_DIR/patches/$cat/$pn*; do
 		dn="${d##*/}"
 		[[ "$dn" == "$pn" || "$dn" == "$p" || "$dn" == "$p-$pr" \
 			|| "$dn" == "$pn[$slot]" || "${pv#$pn-}" == ${dn#$pn-} ]] \
@@ -2524,11 +2543,11 @@ function info_action_info() {
 		echo -n "$Rd$(pad 12 patches)$NO: "
 		for x in "${patches[@]}"; do echo "$x"; done
 	fi | fmt_w $COLUMNS 0 14
-	if [[ -d /var/db/pkg/$cpv ]]; then
+	if [[ -d ${VARDB_DIR}/$cpv ]]; then
 		local counter=$(extract_var_from_vardb COUNTER $cpv)
 		local logs=()
 		for ((i=counter-1;i<=counter+1;++i)); do
-			x=/var/log/portage/$i-$pv.log
+			x=${PORTAGE_LOG_DIR}/$i-$pv.log
 			[[ -f "$x" ]] && logs[${#logs[@]}]="$x"
 		done
 		if ((${#logs[@]})); then
@@ -2559,9 +2578,9 @@ function mlsr_trees_sorted() {
 	local cp="$1"
 	( 
 		avail_versions "$cp" yes yes
-		for inst in /var/db/pkg/$cp-$VER_SHPAT; do
+		for inst in ${VARDB_DIR}/$cp-$VER_SHPAT; do
 			[[ -d "$inst" ]] || continue
-			cpv=${inst#/var/db/pkg/}
+			cpv=${inst#${VARDB_DIR}/}
 			ebuild=$(extract_var_from_vardb EBUILD $cpv)
 			echo "${cpv#$cp-} ${ebuild%/$cp/${cpv#*/}.ebuild}"
 		done
@@ -2734,7 +2753,7 @@ function info_action_size() {
 	for file in $(sed -e "s:^obj \(.*\) [[:xdigit:]]\+ [[:digit:]]\+$:\1:;
 		s:^sym \(.*\) -> \(.*\) .*$:\1:;
 		s:^dir \(.*\)$:\1:" \
-		/var/db/pkg/$cpv/CONTENTS); do
+		${VARDB_DIR}/$cpv/CONTENTS); do
 		(( ++files ))
 		[[ -r "$file" ]] && (( bytes += $(stat -c%s "$file") )) \
 			|| (( ++inacc ))
@@ -2770,7 +2789,7 @@ function formatcontentsentry() {
 function info_action_contents() {
 	set_xterm_title "Displaying contents of $1"
 	grep -v '^\(obj\|sym\|dir\) /usr/src/debug\(/\|$\)' \
-		/var/db/pkg/$1/CONTENTS | formatcontentsentry
+		${VARDB_DIR}/$1/CONTENTS | formatcontentsentry
 }
 
 # Canonicalize a path by removing //, . and .. segments; but don't resolve 
@@ -2837,8 +2856,8 @@ function info_action_owners_match() {
 	if [[ "$path" == /* ]]; then
 		grep -lx "obj ${rx} [[:xdigit:]]\+ [[:digit:]]\+\
 \|sym ${rx} -> .\+ [[:digit:]]\+\
-\|dir ${rx}" /var/db/pkg/*/*/CONTENTS | while read x ; do
-			x=${x#/var/db/pkg/}; x=${x%/CONTENTS}
+\|dir ${rx}" ${VARDB_DIR}/*/*/CONTENTS | while read x ; do
+			x=${x#${VARDB_DIR}/}; x=${x%/CONTENTS}
 			if [[ "$opt_arg_for_emerge" ]]; then
 				echo "=$x"
 			else
@@ -2848,8 +2867,8 @@ function info_action_owners_match() {
 	else
 		grep -x "obj .*/${rx} [[:xdigit:]]\+ [[:digit:]]\+\
 \|sym .*/${rx} -> .\+ [[:digit:]]\+\
-\|dir .*/${rx}" /var/db/pkg/*/*/CONTENTS \
-		| sed 's!/var/db/pkg/\([^/]\+/[^/]\+\)/CONTENTS:!\1 !' \
+\|dir .*/${rx}" ${VARDB_DIR}/*/*/CONTENTS \
+		| sed "s!${VARDB_DIR}/\\([^/]\\+/[^/]\\+\\)/CONTENTS:!\\1 !" \
 		| ( oldx=""
 		while read x rest; do
 			[[ "$oldx" == "$x" ]] || echo "$(format_cpv $x):"
@@ -2870,7 +2889,7 @@ function info_action_catpackages() {
 		return 1
 	fi
 	(
-		find /var/db/pkg/$1 -mindepth 1 -maxdepth 1 -type d \
+		find ${VARDB_DIR}/$1 -mindepth 1 -maxdepth 1 -type d \
 		| while read x; do
 			x=${x##*/}
 			echo ${x%-$VER_SHPAT}
@@ -2964,7 +2983,7 @@ function info_action_search() {
 		if [[ "$1" != *[*?]* ]]; then
 			ppart="*$ppart*"
 		fi
-		for x in /var/db/pkg/$cpart/$ppart-$VER_SHPAT; do
+		for x in ${VARDB_DIR}/$cpart/$ppart-$VER_SHPAT; do
 			[[ -d "$x" ]] && echo "$x"
 		done
 		if [[ "$opt_arg_uninstalled" ]]; then
@@ -3160,7 +3179,7 @@ function filter_world() {
 function filter_etc_file() {
 	local filename="$1" filter=("${@:2}")
 	local newfile="${temp_dir}/${1//\//_}"
-	[[ "$filename" == /* ]] || filename="/etc/portage/$filename"
+	[[ "$filename" == /* ]] || filename="$ETC_PORTAGE_DIR/$filename"
 	if ! [[ -e "$filename" ]]; then
 		return 0
 	elif [[ -d "$filename" ]]; then
@@ -3271,7 +3290,7 @@ function package_mask_filter_inner() {
 		log_message 1 "$cp-$mlsr inclusion masked"
 	elif is_in_maskfile "$cp" "$mlsr" $(etc_portage_files package.unmask); then
 		log_message 1 "$cp-$mlsr unmasked"
-	elif is_in_maskfile "$cp" "$mlsr" "$newfile" $(profile_files_extra package.mask | grep -v /etc/portage/package.mask); then
+	elif is_in_maskfile "$cp" "$mlsr" "$newfile" $(profile_files_extra package.mask | grep -v "$ETC_PORTAGE_DIR/package.mask"); then
 		log_message 1 "$cp-$mlsr otherwise masked"
 	else
 		return 0
@@ -3384,7 +3403,7 @@ function bashrc_filter() {
 					mls="${mlsr%-r+([[:digit:]])}"; rev="${mlsr#$mls-}"
 					PN="${cp##*/}"; P="$PN-$mls"; PV="$mls"; PR="${rev:-r0}"
 					PVR="$mlsr"; PF="$PN-$mlsr"; CATEGORY="${t_cp%/*}"
-					for x in /var/db/pkg/$cp-$mlsr/+([[:upper:]]); do
+					for x in ${VARDB_DIR}/$cp-$mlsr/+([[:upper:]]); do
 						[[ -r "$x" ]] && read ${x##*/} <<<"$(<"$x")"
 					done
 					eval [[ "$match" == "$target" ]]
@@ -3424,7 +3443,7 @@ function print_stats() {
 	world=$(wc -l <$temp_dir/oldworld)
 	red=$((world - n))
 	sys=$(echo "${allprofilepackages}" | wc -l)
-	inst=$(echo /var/db/pkg/*/*/PF | wc -w)
+	inst=$(echo ${VARDB_DIR}/*/*/PF | wc -w)
 	(
 		echo
 		echo \
