@@ -54,15 +54,18 @@ run() {
 }
 
 # Pick targets that exist on this system. We want stable, common packages.
+# Run in a subshell with nullglob so an empty match expands to nothing
+# rather than the literal pattern, which keeps `set -u` happy.
 pick_glob() {
-	# pick first installed package matching cat/name-prefix
-	local g
-	for g in "$@"; do
-		set +u
-		local m=( /var/db/pkg/$g* )
-		set -u
-		[[ -d "${m[0]}" ]] && { echo "${m[0]#/var/db/pkg/}"; return; }
-	done
+	(
+		shopt -s nullglob
+		local g m
+		for g in "$@"; do
+			local arr=( /var/db/pkg/$g* )
+			(( ${#arr[@]} )) && { echo "${arr[0]#/var/db/pkg/}"; exit 0; }
+		done
+		exit 1
+	)
 }
 
 PORTAGE=$(pick_glob sys-apps/portage)
@@ -144,6 +147,9 @@ run 'rev-exists/python:bash'  -X "$PN_PYTHON" "$PN_BASH"
 # _smartdep paths the same way.
 run 'pruneworld/pretend'                  -wp
 run 'purge/pretend'                       -Pp
-run -t 300 'depclean/redundant'           --exec 'redundant'
+# redundant() emits the cpv list to stdout (what emerge would consume)
+# and a parallel cp+mlsr line to stderr (for human display via emerge).
+# For a stable smoke snapshot, drop the stderr half.
+run -t 300 'depclean/redundant'           --exec 'redundant 2>/dev/null'
 run 'filter-etc-portage'                  -E --ask=no --pretend
 run 'overlay-clean/missing'               -O /tmp/udept-nonexistent-overlay-$$

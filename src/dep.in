@@ -994,6 +994,10 @@ function best_tree() {
 	echo $PORTDIR
 	return 1
 }
+# db_grep with --with-tree calls best_tree once per matching cpv; on a
+# needle hitting hundreds of revdeps that's hundreds of full
+# portage_trees stat-walks. Memoise.
+memoise best_tree
 
 function edb_tree() {
 	cpv="$1"
@@ -1769,7 +1773,7 @@ function db_grep() {
 	local needle="$1" with_tree="$2" attr="$3" tree cpv
 	if [[ "$opt_arg_original_depends" ]]; then
 		find /var/db/pkg -name "$attr" \
-		| xargs grep -l "${needle}" \
+		| xargs -r grep -l "${needle}" \
 		| cut -d/ -f5-6
 	elif [[ "$opt_arg_uninstalled" ]]; then
 		for tree in $portage_trees; do
@@ -1791,7 +1795,7 @@ function db_grep() {
 		find /var/db/pkg -mindepth 3 -maxdepth 3 \
 			\( -name DEPEND -o -name RDEPEND -o -name BDEPEND \
 			   -o -name IDEPEND -o -name PDEPEND \) \
-		| xargs grep -l "${needle}" 2>/dev/null \
+		| xargs -r grep -l "${needle}" 2>/dev/null \
 		| sed -n 's!^/var/db/pkg/\([^/]*/[^/]*\)/.*!\1!p' \
 		| sort -u \
 		| while read cpv; do
@@ -2844,12 +2848,16 @@ function info_action_owners() {
 }
 
 function info_action_owners_match() {
-	path="$1"
+	local path="$1"
+	# Escape characters with meaning in basic regex so a path containing
+	# e.g. '[' or '*' doesn't turn into an unintended pattern. '/' is not
+	# special in BRE — leave it alone (escaping it produces grep warnings).
+	local rx="$(printf '%s' "${path%/}" | sed 's/[][\\.*^$]/\\&/g')"
 	set_xterm_title "Finding owners of $path..."
 	if [[ "$path" == /* ]]; then
-		grep -lx "obj ${path%/} [[:xdigit:]]\+ [[:digit:]]\+\
-\|sym ${path%/} -> .\+ [[:digit:]]\+\
-\|dir ${path%/}" /var/db/pkg/*/*/CONTENTS | while read x ; do
+		grep -lx "obj ${rx} [[:xdigit:]]\+ [[:digit:]]\+\
+\|sym ${rx} -> .\+ [[:digit:]]\+\
+\|dir ${rx}" /var/db/pkg/*/*/CONTENTS | while read x ; do
 			x=${x#/var/db/pkg/}; x=${x%/CONTENTS}
 			if [[ "$opt_arg_for_emerge" ]]; then
 				echo "=$x"
@@ -2858,9 +2866,9 @@ function info_action_owners_match() {
 			fi
 		done
 	else
-		grep -x "obj .*/${path%/} [[:xdigit:]]\+ [[:digit:]]\+\
-\|sym .*/${path%/} -> .\+ [[:digit:]]\+\
-\|dir .*/${path%/}" /var/db/pkg/*/*/CONTENTS \
+		grep -x "obj .*/${rx} [[:xdigit:]]\+ [[:digit:]]\+\
+\|sym .*/${rx} -> .\+ [[:digit:]]\+\
+\|dir .*/${rx}" /var/db/pkg/*/*/CONTENTS \
 		| sed 's!/var/db/pkg/\([^/]\+/[^/]\+\)/CONTENTS:!\1 !' \
 		| ( oldx=""
 		while read x rest; do
