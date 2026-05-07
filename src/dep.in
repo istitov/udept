@@ -2928,8 +2928,16 @@ function info_action_owners_match() {
 		| sed "s!${VARDB_DIR}/\\([^/]\\+/[^/]\\+\\)/CONTENTS:!\\1 !" \
 		| ( oldx=""
 		while read x rest; do
-			[[ "$oldx" == "$x" ]] || echo "$(format_cpv $x):"
-			echo -n "    "; formatcontentsentry <<<"$rest"
+			if [[ "$opt_arg_for_emerge" ]]; then
+				# Same cpv may match multiple files; emit each
+				# atom once. grep walks ${VARDB_DIR}/*/*/CONTENTS
+				# in glob-sorted (cat/pkg) order, so dedup against
+				# the immediate prior cpv is sufficient.
+				[[ "$oldx" == "$x" ]] || format_atom_for_emerge "$x"
+			else
+				[[ "$oldx" == "$x" ]] || echo "$(format_cpv $x):"
+				echo -n "    "; formatcontentsentry <<<"$rest"
+			fi
 			oldx="$x"
 		done
 		)
