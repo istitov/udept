@@ -788,27 +788,6 @@ function profile_files_extra() {
 	done
 }
 
-function shlex_parse_assignments() {
-	while read name value; do
-		if [[ "$name" == "!source" ]]; then
-			eval shlex_parse_assignments "\"$value\""
-		elif [[ "${!name+isset}" ]] && has $name $PORTAGE_VARS_ADDITIVE; then
-			eval "$name=\"${value//\$@(\{$name\}|$name)} ${!name}\""
-		else
-			eval "$name=\"$value\""
-		fi
-	done < <(sed -n -e '/^[[:space:]]*[[:alnum:]_]\+=/ {
-			s/^\([^=]\+\)=\([^"#]\+\)\([[:space:]]*#.*\)\?/\1 \2/ ; ta;
-			s/^\([^=]\+\)="\([^"]\+\).*"\([[:space:]]*#.*\)\?/\1 \2/ ; ta;
-			s/^\([^=]\+\)="\?/\1 / ; {
-				:b ; N ; s/".*// ; tc ; bb ; :c ; s/\\\?\n/ /g
-			} ;
-		} ;
-		s/^[[:space:]]*source[[:space:]]\+/!source /; T
-		:a ; p' \
-		"$@")
-}
-
 # Read repository configuration via portageq. Populates:
 #   PORTDIR        — location of [DEFAULT] main-repo
 #   portage_trees  — space-separated list of all repo locations, ordered
@@ -855,35 +834,29 @@ function read_repos_config() {
 }
 
 function load_portage_config() {
-	# portage settings files are parsed with portage_util.getconfig, which
-	# uses shlex.shlex. We could source the settings files, but that takes
-	# ages and gives spurious results.
-	# Note: PORTDIR / PORTDIR_OVERLAY are deprecated as make.conf vars; the
-	# canonical source is /etc/portage/repos.conf, read via read_repos_config.
-	PORTAGE_VARS_EXPORT="DISTDIR PKGDIR PORTAGE_TMPDIR CCACHE_DIR CHOST ARCH ACCEPT_KEYWORDS USE_EXPAND USE_ORDER"
-	PORTAGE_VARS_KEEP="USE"
-	PORTAGE_VARS_ADDITIVE="USE"
+	# Portage's own resolution of make.conf / make.globals / profile
+	# make.defaults stack (with source directives, additive USE, etc.) is
+	# delegated to portageq. portageq envvar -v emits shell-quoted KEY=VALUE
+	# pairs that are safe to eval — replaces the previous custom sed+eval
+	# scrape, which mishandled make.conf entries containing $-substitutions
+	# and was a remote-execution risk if dep ever read an attacker-supplied
+	# make.conf-shaped file.
 	read_repos_config
 	# Walk the profile stack after repo_loc is populated so cross-repo
 	# `<repo>:<path>` parent entries can be resolved.
 	[[ -h "/etc/portage/make.profile" ]] && profile_stack="$(profile_stack_read /etc/portage/profile .
 		profile_stack_read /etc/portage/make.profile .)"
-	while read name value; do
-		if ! [[ "${!name+isset}" ]] || has $name $PORTAGE_VARS_ADDITIVE; then
-			eval "$name=\"$value\""
-		fi
-	done <<<"$(
-		shlex_parse_assignments \
-			/usr/share/portage/config/make.globals \
-			$(profile_files make.defaults) \
-			/etc/portage/make.conf
-		for x in $PORTAGE_VARS_EXPORT $USE_EXPAND; do
-			echo "$x" "${!x}"
-		done
-		for x in $PORTAGE_VARS_KEEP; do
-			echo "__conf_$x" "${!x}"
-		done
-	)"
+	# Round 1: the static set of vars we always want plus USE_EXPAND, which
+	# we need read first so we can ask for its expansions in round 2.
+	eval "$(portageq envvar -v \
+		DISTDIR PKGDIR PORTAGE_TMPDIR CCACHE_DIR \
+		CHOST ARCH ACCEPT_KEYWORDS \
+		USE_EXPAND USE_ORDER USE 2>/dev/null)"
+	__conf_USE="$USE"
+	# Round 2: each USE_EXPAND'd var (LINGUAS, PYTHON_TARGETS, …).
+	if [[ "$USE_EXPAND" ]]; then
+		eval "$(portageq envvar -v $USE_EXPAND 2>/dev/null)"
+	fi
 	read -a ACCEPT_KEYWORDS <<<"$ARCH $ACCEPT_KEYWORDS"
 	categories=$(sort -u $(profile_files_extra categories))
 
