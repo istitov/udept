@@ -8,7 +8,8 @@ EXTRA_DIST = \
 	tests/unit/dep_to_cps.bats \
 	tests/unit/dep_satisfies.bats \
 	tests/unit/world_sets_expand.bats \
-	tests/unit/format_atom_for_emerge.bats
+	tests/unit/format_atom_for_emerge.bats \
+	tests/unit/required_use.bats
 
 # 'make check' runs the bats unit-test suite. Override BATS to point at
 # a non-system bats binary if needed.

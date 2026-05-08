@@ -1,4 +1,4 @@
-.TH DEP 1 "2026-05-07" "udept 0.6.0" "Portage utilities"
+.TH DEP 1 "2026-05-09" "udept 0.6.0" "Portage utilities"
 .SH NAME
 dep \- an inappropriate Portage engine
 .SH SYNOPSIS
@@ -39,6 +39,7 @@ Info types:
   -l, --depends      (default) List dependencies of PACKAGE
   -L, --rev-depends  List reverse dependencies of PACKAGE
   -r, --provides     List virtuals PACKAGE provides
+  -Q, --required-use Check REQUIRED_USE of PACKAGE against active USE
   -R, --virtuals     List packages providing VIRTUAL
   -S, --depstrings   Display the dependency strings for PACKAGE
   -t, --tree-depends Display the full dependency tree for PACKAGE
@@ -128,6 +129,9 @@ List reverse dependencies of PACKAGE
 .TP
 \fB-r\fR, \fB--provides\fR
 List virtuals PACKAGE provides
+.TP
+\fB-Q\fR, \fB--required-use\fR
+Check REQUIRED_USE of PACKAGE against active USE
 .TP
 \fB-R\fR, \fB--virtuals\fR
 List packages providing VIRTUAL

@@ -235,7 +235,7 @@ function arg() {
 
 # remaining option letters:
 # -            m           y  +  cdefghijklm    rstu wxyz
-# -AB    GHIJ  MNO Q     W YZ +ABCDEFGHIJ LMNOPQRSTUVWXYZ
+# -AB    GHIJ  MNO       W YZ +ABCDEFGHIJ LMNOPQRSTUVWXYZ
 # - 234567890                 + 234567890
 USELINE="[OPTION]... [ACTION | INFO-TYPE [PACKAGE | VIRTUAL | FILE | USE | CATEGORY | PATTERN]...]"
 
@@ -263,6 +263,7 @@ arg info k keywords		"Show per-arch keyword status for PACKAGE" 		PNAME
 arg info l depends		"(default) List dependencies of PACKAGE" 		PACKAGE
 arg info L rev-depends 	"List reverse dependencies of PACKAGE" 	  PNAME,PACKAGE
 arg info r provides 	"List virtuals PACKAGE provides" 				PACKAGE
+arg info Q required-use "Check REQUIRED_USE of PACKAGE against active USE" PACKAGE
 arg info R virtuals		"List packages providing VIRTUAL" 				VIRTUAL
 arg info S depstrings	"Display the dependency strings for PACKAGE" 	PACKAGE
 arg info t tree-depends "Display the full dependency tree for PACKAGE" 	PACKAGE
@@ -2566,6 +2567,151 @@ function info_action_iuse() {
 	done
 }
 
+# REQUIRED_USE evaluator (per PMS — || ^^ added in EAPI 4, ?? in EAPI 5).
+#
+# Grammar (whitespace-separated tokens):
+#   expr  := flag                    # flag must be set
+#         := !flag                   # flag must not be set
+#         := flag? ( exprs )         # if flag set, all exprs must hold
+#         := !flag? ( exprs )        # if flag not set, all exprs must hold
+#         := || ( exprs )            # at-least-one
+#         := ^^ ( exprs )            # exactly-one
+#         := ?? ( exprs )            # at-most-one
+#         := ( exprs )               # group; all hold
+#   exprs := expr*
+# Top-level is implicit AND.
+#
+# The evaluator is intentionally separate from crunch_depends — REQUIRED_USE
+# has its own grammar (no atoms, but adds ^^ and ??), and the dep parser is
+# the most fragile part of the script. Sharing it would couple two distinct
+# concerns.
+#
+# Inputs (set by caller before invoking eval_ru_list):
+#   RU_TOKS   — tokenized REQUIRED_USE string (array)
+#   RU_ACTIVE — active USE flags (space-separated string, suitable for `has`)
+#   ru_idx    — current token index (init 0)
+#   RU_FAIL   — accumulator for failing-clause descriptions (init empty)
+# eval_ru_list returns 0 if all top-level exprs hold, 1 otherwise; RU_FAIL
+# holds one entry per top-level violation. Inside ||/^^/?? groups, child
+# failures don't propagate — only the group's own truth value matters.
+function eval_ru_list() {
+	local result=0
+	while ((ru_idx < ${#RU_TOKS[@]})); do
+		[[ "${RU_TOKS[ru_idx]}" == ")" ]] && break
+		eval_ru_expr || result=1
+	done
+	return $result
+}
+
+function eval_ru_expr() {
+	local tok="${RU_TOKS[ru_idx]}"
+	case "$tok" in
+		"||"|"^^"|"??")
+			local head="$tok" span_start=$ru_idx hits=0 saved=${#RU_FAIL[@]}
+			((ru_idx++))
+			[[ "${RU_TOKS[ru_idx]}" == "(" ]] || {
+				format_error <<<"REQUIRED_USE: '$head' not followed by '('" >&2
+				return 1
+			}
+			((ru_idx++))
+			while ((ru_idx < ${#RU_TOKS[@]})); do
+				[[ "${RU_TOKS[ru_idx]}" == ")" ]] && break
+				eval_ru_expr && ((hits++))
+			done
+			((ru_idx++))
+			# Drop child failures; only the group's own truth matters.
+			RU_FAIL=("${RU_FAIL[@]:0:saved}")
+			case "$head" in
+				"||") (( hits >= 1 )) && return 0 ;;
+				"^^") (( hits == 1 )) && return 0 ;;
+				"??") (( hits <= 1 )) && return 0 ;;
+			esac
+			RU_FAIL+=("${RU_TOKS[*]:span_start:ru_idx-span_start}")
+			return 1
+			;;
+		"(")
+			((ru_idx++))
+			eval_ru_list; local r=$?
+			((ru_idx++))
+			return $r
+			;;
+		*"?")
+			local cond="${tok%\?}" negated=
+			[[ "$cond" == "!"* ]] && { negated=1; cond="${cond#!}"; }
+			((ru_idx++))
+			[[ "${RU_TOKS[ru_idx]}" == "(" ]] || {
+				format_error <<<"REQUIRED_USE: '$tok' not followed by '('" >&2
+				return 1
+			}
+			local active=0 should_check=
+			has "$cond" $RU_ACTIVE && active=1
+			if [[ "$negated" ]]; then
+				((active == 0)) && should_check=1
+			else
+				((active == 1)) && should_check=1
+			fi
+			if [[ "$should_check" ]]; then
+				eval_ru_expr
+				return $?
+			fi
+			# Skip the ( ... ) block without evaluating it.
+			local depth=0
+			while ((ru_idx < ${#RU_TOKS[@]})); do
+				case "${RU_TOKS[ru_idx]}" in
+					"(") ((depth++)) ;;
+					")") ((depth--)); ((depth == 0)) && { ((ru_idx++)); break; } ;;
+				esac
+				((ru_idx++))
+			done
+			return 0
+			;;
+		"!"*)
+			local flag="${tok#!}"
+			((ru_idx++))
+			has "$flag" $RU_ACTIVE && { RU_FAIL+=("$tok"); return 1; }
+			return 0
+			;;
+		*)
+			((ru_idx++))
+			has "$tok" $RU_ACTIVE && return 0
+			RU_FAIL+=("$tok")
+			return 1
+			;;
+	esac
+}
+
+function info_action_required-use() {
+	local cpv="$1"
+	set_xterm_title "Checking REQUIRED_USE for $cpv"
+	local ru
+	ru="$(extract_var REQUIRED_USE $cpv 2>/dev/null)"
+	if [[ -z "${ru// /}" ]]; then
+		(( opt_arg_verbose > 0 )) \
+			&& echo "$(format_cpv "$cpv") ${GR}OK${NO} (no REQUIRED_USE)"
+		return 0
+	fi
+	local RU_TOKS=($ru) RU_ACTIVE
+	RU_ACTIVE="$(dbuse "$cpv")"
+	local -i ru_idx=0
+	local RU_FAIL=()
+	eval_ru_list
+	if ((${#RU_FAIL[@]} == 0)); then
+		(( opt_arg_verbose > 0 )) \
+			&& echo "$(format_cpv "$cpv") ${GR}OK${NO}"
+		return 0
+	fi
+	echo -n "$(format_cpv "$cpv") ${RD}FAIL${NO}: "
+	local first=1 f
+	for f in "${RU_FAIL[@]}"; do
+		((first)) || echo -n "; "
+		echo -n "$f"
+		first=0
+	done
+	echo
+	required_use_violations=$((${required_use_violations:-0}+1))
+	return 1
+}
+
 # Consider doing this in xslt - too expensive?
 function metadata_extract() {
 	local tree="$1" cp="$2" tag="$3"
@@ -3117,6 +3263,10 @@ END
 		[[ "${shopt_itype[${do_info_shopt_idx}]}" == LEGION ]] && break
 	done
 	[[ "$do_package_sizes" ]] && pkgsize_summary
+	# Propagate --required-use violations as a non-zero exit code so the
+	# action composes cleanly with shell pipelines / Makefile targets.
+	(( ${required_use_violations:-0} > 0 )) && return 1
+	return 0
 }
 
 function lower() {
