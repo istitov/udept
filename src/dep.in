@@ -997,6 +997,78 @@ function dep_satisfies() {
 	dep_satisfies_mlsr "$t_mlsr" "$vs" "$d_mlsr"
 }
 
+# slot_satisfies pkg_slot dep_spec
+#
+# Test whether a package with SLOT pkg_slot satisfies a slot-dependency
+# spec dep_spec (the substring of a depatom from the first ':' up to a
+# trailing USE-dep '[' or end-of-atom; the leading ':' is already
+# stripped). Returns 0 on match, 1 otherwise.
+#
+# Per PMS 8.2.6.3:
+#   ''            → no slot constraint, matches any slot
+#   '='           → bind-operator only, matches any slot
+#   '*'           → any-slot operator
+#   'NAME'        → exact match on main slot (sub-slot ignored on both sides)
+#   'NAME='       → match on main slot; the trailing '=' is the bind-on-rebuild
+#                   marker and is irrelevant for satisfaction
+#   'NAME/SUB'    → exact match on slot AND sub-slot
+#   'NAME/SUB='   → exact match on slot AND sub-slot (bind marker ignored)
+#
+# pkg_slot may be 'NAME' or 'NAME/SUB'. A bare-NAME constraint accepts a
+# pkg_slot with any sub-slot. A NAME/SUB constraint requires the pkg to
+# advertise its sub-slot — a pkg_slot of just 'NAME' does NOT match
+# 'NAME/SUB' (we cannot prove sub-slot identity without the data).
+#
+# If pkg_slot is empty (slot unknown), only matches when dep_spec is the
+# any-slot form. This is the conservative call for revdep filtering: we
+# don't claim a match we can't prove.
+function slot_satisfies() {
+	local pkg_slot=$1 dep_spec=$2
+	[[ -z "$dep_spec" || "$dep_spec" == "=" || "$dep_spec" == "*" ]] && return 0
+	dep_spec=${dep_spec%=}
+	[[ -z "$pkg_slot" ]] && return 1
+	if [[ "$dep_spec" == */* ]]; then
+		[[ "$pkg_slot" == "$dep_spec" ]]
+	else
+		[[ "${pkg_slot%%/*}" == "$dep_spec" ]]
+	fi
+}
+
+# dep_satisfies_slot testpkg depatom [pkg_slot]
+#
+# Like dep_satisfies, but additionally honors any :slot[/sub-slot] in
+# depatom when pkg_slot is known. Returns:
+#   0 — match (cp, version, AND slot)
+#   1 — version or slot mismatch
+#   2 — different cp (early-out, same as dep_satisfies)
+#
+# If pkg_slot is omitted and testpkg names an installed cpv, the slot is
+# looked up via slot_for. If neither caller-supplied nor lookup yields a
+# slot, dep_satisfies_slot falls back to slot_satisfies's conservative
+# behavior — no slot info = mismatch when the depatom carries a
+# constraint.
+#
+# If depatom has no slot constraint, behaves identically to dep_satisfies
+# (the slot lookup is skipped entirely — this is the hot path).
+function dep_satisfies_slot() {
+	local testpkg=$1 depatom=$2 pkg_slot=${3-}
+	local dep_slot_spec=
+	# Pull the slot fragment off depatom — content from first ':' up to
+	# '[' (USE-deps) or end-of-atom. Done before delegating because
+	# dep_satisfies would strip and discard it.
+	if [[ "$depatom" == *:* ]]; then
+		local after=${depatom#*:}
+		dep_slot_spec=${after%%\[*}
+	fi
+	dep_satisfies "$testpkg" "$depatom"
+	local rc=$?
+	(( rc != 0 )) && return $rc
+	[[ -z "$dep_slot_spec" ]] && return 0
+	[[ -z "$pkg_slot" ]] && pkg_slot=$(slot_for "$testpkg" 2>/dev/null)
+	slot_satisfies "$pkg_slot" "$dep_slot_spec" || return 1
+	return 0
+}
+
 function accept_for() {
 	local cp="$1" mlsr="$2" return="${3:-RESULT}"
 	# package.accept_keywords is the modern canonical name; package.keywords
