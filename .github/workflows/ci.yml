@@ -67,7 +67,7 @@ jobs:
       # write refs that land on shallow grafts ("shallow roots are not
       # allowed to be updated"). Full history avoids that. udept is a
       # small repo, so the extra bandwidth is negligible.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
