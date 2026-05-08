@@ -1678,8 +1678,10 @@ function raw_depends() {
 		# We don'\''t propagate USE constraints through resolution, so the
 		# atom without them still names the right package.
 		s/\[[^]]*\]//g
-		# Strip slot/sub-slot/operator suffixes — :0, :*, :=, :0/2, :0=
-		s/:[^][[:space:]()|]*//g
+		# Slot/sub-slot/operator suffixes (:0, :*, :=, :0/2, :0=) are
+		# preserved in the token stream so slot-aware revdep filtering
+		# (dep_satisfies_slot) can read them. Slot-agnostic consumers
+		# (dep_satisfies, dep_to_cps, resolve_depatom) strip locally.
 		# Tokenise: parens become standalone tokens, whitespace -> newlines
 		s/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g
 	'
@@ -2021,14 +2023,19 @@ function _smartdep() {
 	fi
 	local needle=${asvirtual:-$cp}
 	local ncpv=${virtual_cpv:-$cpv}
+	# Optional slot suffix on the matched atom — ':slot[/sub][=]' or ':*'.
+	# raw_depends now preserves these in the token stream; the regex used
+	# to require a literal space immediately after the atom which would
+	# silently miss every slot-bearing depatom.
+	local slot_suffix='\(:[^][[:space:]]*\)\?'
 	potential_revdepends $needle \
 	| while read deppkg; do
 		has $deppkg $exclude && continue
-		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\) ' \
+		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"' ' \
 		| while read depatom taint; do
-			if dep_satisfies "${ncpv}" "$depatom"; then
+			if dep_satisfies_slot "${ncpv}" "$depatom"; then
 				if ! echo "${cands}" | while read candidate; do
-					dep_satisfies "${needle}-${candidate}" "$depatom" && break
+					dep_satisfies_slot "${needle}-${candidate}" "$depatom" && break
 				done; then
 					echo $deppkg $depatom $taint
 					[[ "$exclude" ]] && return 1
@@ -2039,12 +2046,12 @@ function _smartdep() {
 			fi
 		done || return 1
 	done || return 0
-	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
+	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
 	| while read depatom; do
 		depatom=${depatom#\*}
-		if dep_satisfies "$ncpv" "$depatom"; then
+		if dep_satisfies_slot "$ncpv" "$depatom"; then
 			if ! echo "${cands}" | while read candidate; do
-				dep_satisfies "${needle}-${candidate}" "$depatom" && break
+				dep_satisfies_slot "${needle}-${candidate}" "$depatom" && break
 			done; then
 				echo SYSTEM $depatom
 				break
@@ -2052,11 +2059,11 @@ function _smartdep() {
 		fi
 	done
 	{ cat ${WORLD_FILE}; world_sets_expand; } \
-	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
+	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
 	| while read depatom; do
-		if dep_satisfies "$ncpv" "$depatom"; then
+		if dep_satisfies_slot "$ncpv" "$depatom"; then
 			if ! echo "${cands}" | while read candidate; do
-				dep_satisfies "${needle}-${candidate}" "$depatom" && break
+				dep_satisfies_slot "${needle}-${candidate}" "$depatom" && break
 			done; then
 				echo WORLD $depatom
 				break
@@ -2077,18 +2084,22 @@ function _smartdep_nopv () {
 	local exclude="$3"
 	local ordeps="$4"
 	trap return SIGPIPE
+	# Slot-agnostic: target is a cp with no version, so we can't pin a
+	# specific SLOT for filtering. The regex still has to *tolerate*
+	# slots in the token stream now that raw_depends preserves them.
+	local slot_suffix='\(:[^][[:space:]]*\)\?'
 	potential_revdepends ${needle} "$exclude" \
 	| while read deppkg; do
-		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\) ' \
-		| if read depatom taint; then 
+		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"' ' \
+		| if read depatom taint; then
 			echo $deppkg $depatom $taint
 			[[ -z "$exclude" ]] || return 1
 		fi
 	done || return 0
-	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
+	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
 	| if read depatom; then echo SYSTEM $depatom; fi
 	{ cat ${WORLD_FILE}; world_sets_expand; } \
-	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)[[:space:]]*$' \
+	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
 	| if read depatom; then echo WORLD $depatom; fi
 	for virtual in $(virtuals_from $needle); do
 		_smartdep_nopv "$virtual" "yes" "$exclude" "$ordeps"
@@ -2151,6 +2162,11 @@ function _resolve_depatom_inner() {
 function resolve_depatom() {
 	depatom="$1"; installed_only="$2"
 	set_xterm_title "Resolving dependency: $depatom"
+	# resolve_depatom answers "is this depatom satisfied by anything?" — a
+	# slot-agnostic question. Strip slot/sub-slot/operator suffixes here so
+	# downstream parsing (which expects bare cat/pkg[-version[*]]) doesn't
+	# trip on the slots that raw_depends now preserves in the token stream.
+	depatom="${depatom%%:*}"
 	d_cpv="${depatom/#@(<|<=|=|~|>=|>)}"; vs="${depatom%${d_cpv}}"
 	if [[ "$d_cpv" == */* ]]; then
 		_resolve_depatom_inner && return 0
