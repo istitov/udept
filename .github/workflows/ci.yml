@@ -132,13 +132,11 @@ jobs:
       # check' touches.
       - name: emerge =app-portage/udept-9999 (real merge path)
         env:
-          # 'test' enables src_test (runs 'emake check' → bats suite),
-          # which exercises the ebuild's BDEPEND test wiring (bats /
-          # bats-support / bats-assert) — independent of the in-tree
-          # 'make check' step above. The sandbox bypasses are needed
-          # because Docker doesn't grant the unshare/namespace caps
-          # that FEATURES=*-sandbox would require.
-          FEATURES: "test -sandbox -usersandbox -ipc-sandbox -network-sandbox"
+          # Sandbox bypasses are needed because Docker doesn't grant the
+          # unshare/namespace caps that FEATURES=*-sandbox would require.
+          # FEATURES=test is *not* set here — see package.env below for why
+          # it has to be scoped per-atom rather than at the step level.
+          FEATURES: "-sandbox -usersandbox -ipc-sandbox -network-sandbox"
         run: |
           # udept-9999 is a live ebuild, so it has KEYWORDS="" (not even
           # ~amd64). '**' is the only keyword spec that accepts unkeyworded
@@ -146,6 +144,23 @@ jobs:
           # bats-helpers pattern above.
           cat >/etc/portage/package.accept_keywords/udept <<'EOF'
           =app-portage/udept-9999 **
+          EOF
+
+          # FEATURES=test scoped to udept only via package.env. A step-level
+          # 'FEATURES: test' propagates test mode across the entire dependency
+          # graph — every transitive dep (setuptools, pip, pillow, cryptography,
+          # maturin, ...) gets pulled in with [test] enabled, which produces
+          # slot conflicts and unsatisfiable REQUIRED_USE on the python tooling
+          # (e.g. dev-python/pillow needs jpeg2k+lcms+tiff+truetype with test;
+          # setuptools-79 vs. installed setuptools-82 collide on slot 0). The
+          # python deps come in via the autotools eclass / build-host tooling
+          # rather than udept itself (udept is pure bash). package.env applies
+          # the FEATURES override only to the named atom, so src_test runs for
+          # udept-9999 and the rest of the graph merges with default USE.
+          mkdir -p /etc/portage/env /etc/portage/package.env
+          echo 'FEATURES="${FEATURES} test"' >/etc/portage/env/udept-test.conf
+          cat >/etc/portage/package.env/udept <<'EOF'
+          =app-portage/udept-9999 udept-test.conf
           EOF
           overlay=$(portageq get_repo_path / stuff)
           ebuild="$overlay/app-portage/udept/udept-9999.ebuild"
