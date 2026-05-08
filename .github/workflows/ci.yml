@@ -6,9 +6,25 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # Weekly run against fresh gentoo/stage3:latest. Upstream Portage
+  # drift is the usual cause of breakage in this codebase (the script
+  # is its own Portage engine, written against a layout that's been
+  # moving for ~20 years), so a scheduled run catches "Portage changed
+  # something and dep no longer parses it" before a user files a bug.
+  # Mondays 06:00 UTC: after the weekend's tree updates, before the
+  # work week. GitHub only fires schedules on the default branch.
+  schedule:
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
+
+# Cancel in-flight runs of the same workflow on the same ref when a
+# new push arrives — keeps two runs from racing on rapid commits.
+# Scheduled runs use `github.run_id` to avoid cancelling each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && github.run_id || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
@@ -19,21 +35,22 @@ jobs:
 
     steps:
       # actions/checkout's runner needs node + git inside the container;
-      # stage3 ships neither, so emerge them from the binhost. Disable
-      # binpkg signature verification first — modern stage3 ships getuto
-      # to set up the verifying keyring, but if that's missing or fails,
-      # --getbinpkg silently falls through to source builds and net-libs/
-      # nodejs from source OOMs the runner. The binhost is fetched over
-      # HTTPS regardless; for CI use, the signing layer is acceptable to
-      # drop. This applies to all later emerges too (it's in make.conf).
+      # stage3 ships neither, so emerge them from the binhost. Two
+      # prerequisites first:
+      #   1. emerge-webrsync to populate /var/db/repos/gentoo — stage3:latest
+      #      ships an empty tree and any emerge bails with "Invalid Repository
+      #      Location" before doing anything. Faster than --sync for one-shot
+      #      CI (tarball + GPG verify vs. full rsync); uses the gentoo-release
+      #      keys that ship in stage3.
+      #   2. getuto to populate /etc/portage/gnupg/ with the binhost trust
+      #      keyring. Without it, portage tries to verify the signed binpkgs
+      #      it downloads and bails with NO_PUBKEY — which is what we hit on
+      #      the first run of this workflow. portage names getuto via
+      #      $PORTAGE_TRUST_HELPER and points at it in error output.
       - name: Bootstrap container (git + node for actions/checkout)
         run: |
-          cat >>/etc/portage/make.conf <<'EOF'
-
-          # CI: skip binpkg signature verification (avoids hard
-          # dependence on getuto / keyring being pre-configured).
-          FEATURES="${FEATURES} -binpkg-signing -binpkg-request-signature"
-          EOF
+          emerge-webrsync --quiet
+          getuto
           emerge --quiet-build --usepkg=y --getbinpkg=y \
             dev-vcs/git net-libs/nodejs
 
@@ -44,7 +61,15 @@ jobs:
       - name: Trust workspace for git ownership check
         run: git config --system --add safe.directory '*'
 
+      # fetch-depth: 0 — actions/checkout defaults to a shallow clone
+      # (depth 1). The merge step further down feeds this workspace to
+      # the live ebuild via git-r3 over file://, and git-r3 refuses to
+      # write refs that land on shallow grafts ("shallow roots are not
+      # allowed to be updated"). Full history avoids that. udept is a
+      # small repo, so the extra bandwidth is negligible.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # The stuff overlay hosts both the live udept-9999.ebuild (used by
       # the post-build merge step) and the bats-support / bats-assert
@@ -65,8 +90,17 @@ jobs:
 
       - name: Install autotools + bats stack
         run: |
+          # bats-support / bats-assert on the stuff overlay are keyworded
+          # ~amd64; stage3:latest defaults to stable amd64. Unmask just
+          # those two atoms — narrower than setting ACCEPT_KEYWORDS=~amd64
+          # for the whole step, which would also unmask transitive deps.
+          mkdir -p /etc/portage/package.accept_keywords
+          cat >/etc/portage/package.accept_keywords/bats-helpers <<'EOF'
+          dev-util/bats-support ~amd64
+          dev-util/bats-assert  ~amd64
+          EOF
           emerge --quiet-build --usepkg=y --getbinpkg=y \
-            sys-devel/autoconf sys-devel/automake \
+            dev-build/autoconf dev-build/automake \
             dev-util/bats dev-util/bats-support dev-util/bats-assert
 
       - name: autoreconf -i
@@ -98,9 +132,21 @@ jobs:
       # check' touches.
       - name: emerge =app-portage/udept-9999 (real merge path)
         env:
-          ACCEPT_KEYWORDS: "**"
-          FEATURES: "-sandbox -usersandbox -ipc-sandbox -network-sandbox"
+          # 'test' enables src_test (runs 'emake check' → bats suite),
+          # which exercises the ebuild's BDEPEND test wiring (bats /
+          # bats-support / bats-assert) — independent of the in-tree
+          # 'make check' step above. The sandbox bypasses are needed
+          # because Docker doesn't grant the unshare/namespace caps
+          # that FEATURES=*-sandbox would require.
+          FEATURES: "test -sandbox -usersandbox -ipc-sandbox -network-sandbox"
         run: |
+          # udept-9999 is a live ebuild, so it has KEYWORDS="" (not even
+          # ~amd64). '**' is the only keyword spec that accepts unkeyworded
+          # ebuilds. Per-atom rather than step-level env, matching the
+          # bats-helpers pattern above.
+          cat >/etc/portage/package.accept_keywords/udept <<'EOF'
+          =app-portage/udept-9999 **
+          EOF
           overlay=$(portageq get_repo_path / stuff)
           ebuild="$overlay/app-portage/udept/udept-9999.ebuild"
           [[ -f "$ebuild" ]] || { echo "expected $ebuild in stuff overlay"; exit 1; }
@@ -110,6 +156,17 @@ jobs:
           # silently no-ops and we'd test origin/master not this branch.
           grep -q 'EGIT_REPO_URI="file://' "$ebuild" \
             || { echo "EGIT_REPO_URI rewrite did not take effect; check $ebuild format"; exit 1; }
+
+          # actions/checkout@v4 leaves HEAD detached at $GITHUB_SHA. git-r3
+          # then does 'git fetch <url> +HEAD:refs/git-r3/HEAD' against the
+          # workspace, but a detached HEAD is not advertised as a symref by
+          # upload-pack, so the destination ref doesn't get created and
+          # git-r3 dies at the verify step with "Referencing HEAD failed
+          # (wrong ref?)" even though the objects fetched fine. Re-attach
+          # HEAD to a real branch so the fetch sees a normal symref. The
+          # branch name is fixed ('ci-build') because $GITHUB_REF_NAME can
+          # contain slashes for tags / pull_request refs.
+          git -C "$GITHUB_WORKSPACE" checkout -B ci-build
 
           # git 2.38+ disabled file:// transport by default (CVE-2022-39253);
           # the live ebuild's git-r3 fetch needs it for the workspace clone.

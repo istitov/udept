@@ -1,5 +1,7 @@
 # udept
 
+[![CI](https://github.com/istitov/udept/actions/workflows/ci.yml/badge.svg)](https://github.com/istitov/udept/actions/workflows/ci.yml)
+
 A Gentoo Portage analysis toolkit, written in bash.
 
 It ships a single program — `dep` — that reads Portage's on-disk databases
