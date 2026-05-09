@@ -138,9 +138,24 @@ run 'help'    --help
 run 'depends/portage'         -l "$PORTAGE"
 run 'depends/bash'            -l "$BASH_PKG"
 run 'depends/python'          -l "$PYTHON"
+# rev-depends with a bare PN goes through _smartdep_nopv (slot-agnostic),
+# rev-depends with a full cpv goes through _smartdep (slot-aware: looks
+# up the cpv's installed slot and filters revdep depatoms accordingly).
+# Both code paths shipped in the slot-aware revdep work (commits 836b33c
+# / 4e5a5fc) so smoke covers both.
 run 'rev-depends/portage'     -L "$PN_PORTAGE"
 run 'rev-depends/bash'        -L "$PN_BASH"
 run 'rev-depends/python'      -L "$PN_PYTHON"
+run 'rev-depends-slot/python' -L "$PYTHON"
+# Combined with --for-emerge: flat atom list suitable for emerge --oneshot,
+# annotated with :slot::repo by --full-atoms (the format_atom_for_emerge
+# helper). Exercises both flags in their typical paired use. Uses portage
+# rather than python — portage has ~10 revdeps so the section completes
+# in <1s on any system; python has hundreds and would consistently
+# time-out on dev systems with full installs (CI's stage3 is small enough
+# that python would complete, but the cross-environment instability isn't
+# worth the extra exotic-target coverage).
+run 'rev-depends-emerge/portage' -L --for-emerge --full-atoms "$PN_PORTAGE"
 run 'tree-depends/portage'    -t "$PORTAGE" -D 2
 run 'reverse-tree/python'     -T "$PN_PYTHON" -D 2
 run 'depstrings/portage'      -S "$PORTAGE"
@@ -156,6 +171,12 @@ run 'iuse/python'             -U python
 run 'size/portage'            -z "$PORTAGE"
 run 'search/portage'          -g portage
 run 'owners/file'             -F "$OWNED_FILE"
+# --required-use (-Q) reads REQUIRED_USE from md5-cache, evaluates against
+# the package's active USE, reports unsatisfied clauses. portage typically
+# has a non-trivial '|| ( python_targets_python3_X )' clause; bash has no
+# REQUIRED_USE so we exercise the empty-clause vacuous-success path too.
+run 'required-use/portage'    -Q "$PORTAGE"
+run 'required-use/bash'       -Q "$BASH_PKG"
 
 # --- Virtuals -----------------------------------------------------------
 # Strip the trailing -<version> off the cpv we picked from /var/db/pkg
@@ -167,6 +188,17 @@ run 'provides/portage'        -r "$PORTAGE"
 # --- Existence probes ----------------------------------------------------
 run 'exists/portage:bash'     -x "$PORTAGE" "$PN_BASH"
 run 'rev-exists/python:bash'  -X "$PN_PYTHON" "$PN_BASH"
+
+# --- Error-format probes ------------------------------------------------
+# Lock in the shape of error output for unresolvable arguments. Any
+# regression that changes the error wording or exit status will surface
+# as a diff in this section. 'definitely/nonexistent' is a category/cp
+# that no overlay would ever contain. -l (depends, PACKAGE-typed) goes
+# through star_arg which actually attempts the lookup; -L (rev-depends,
+# PNAME,PACKAGE-typed) trivially passes the unresolved string through to
+# _smartdep_nopv which finds no revdeps and emits nothing — less
+# interesting as a regression check.
+run 'depends/missing'         -l definitely/nonexistent
 
 # --- Actions, all read-only / pretend -----------------------------------
 # `dep -dp` would shell out to emerge --pretend -C, whose runtime is
