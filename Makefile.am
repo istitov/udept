@@ -1,7 +1,6 @@
 SUBDIRS = src doc completion packaging
 
 EXTRA_DIST = \
-	ChangeLog.20060126 \
 	tests/smoke.sh \
 	tests/smoke-diff.sh \
 	tests/unit/test_helper.bash \
