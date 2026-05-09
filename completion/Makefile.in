@@ -142,8 +142,9 @@ am__uninstall_files_from_dir = { \
   || { echo " ( cd '$$dir' && rm -f" $$files ")"; \
        $(am__cd) "$$dir" && echo $$files | $(am__xargs_n) 40 $(am__rm_f); }; \
   }
-am__installdirs = "$(DESTDIR)$(bashcompletiondir)"
-DATA = $(nodist_bashcompletion_DATA)
+am__installdirs = "$(DESTDIR)$(bashcompletiondir)" \
+	"$(DESTDIR)$(zshcompletiondir)"
+DATA = $(nodist_bashcompletion_DATA) $(nodist_zshcompletion_DATA)
 am__tagged_files = $(HEADERS) $(SOURCES) $(TAGS_FILES) $(LISP)
 am__DIST_COMMON = $(srcdir)/Makefile.in
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -227,10 +228,19 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-EXTRA_DIST = dep.completion.in
-DISTCLEANFILES = dep
+EXTRA_DIST = dep.completion.in dep.zsh.in dump-zsh-options.sh
+DISTCLEANFILES = dep _dep
 @BASH_COMPLETION_TRUE@nodist_bashcompletion_DATA = dep
 @BASH_COMPLETION_TRUE@bashcompletiondir = $(datadir)/bash-completion/completions
+
+# zsh completion. Mirrors the bash rule's structure: static prefix
+# (dep.zsh.in) + a build-time appended dump of dep's option tables in
+# zsh-readable typeset syntax. dump-zsh-options.sh handles the format
+# translation (bash's 'declare -p' output uses [N]= indexing that zsh
+# can't read). 2>/dev/null discards the time-eval and Return-value
+# boilerplate that 'dep --exec' emits to stderr.
+@ZSH_COMPLETION_TRUE@nodist_zshcompletion_DATA = _dep
+@ZSH_COMPLETION_TRUE@zshcompletiondir = $(datadir)/zsh/site-functions
 all: all-am
 
 .SUFFIXES:
@@ -284,6 +294,27 @@ uninstall-nodist_bashcompletionDATA:
 	@list='$(nodist_bashcompletion_DATA)'; test -n "$(bashcompletiondir)" || list=; \
 	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
 	dir='$(DESTDIR)$(bashcompletiondir)'; $(am__uninstall_files_from_dir)
+install-nodist_zshcompletionDATA: $(nodist_zshcompletion_DATA)
+	@$(NORMAL_INSTALL)
+	@list='$(nodist_zshcompletion_DATA)'; test -n "$(zshcompletiondir)" || list=; \
+	if test -n "$$list"; then \
+	  echo " $(MKDIR_P) '$(DESTDIR)$(zshcompletiondir)'"; \
+	  $(MKDIR_P) "$(DESTDIR)$(zshcompletiondir)" || exit 1; \
+	fi; \
+	for p in $$list; do \
+	  if test -f "$$p"; then d=; else d="$(srcdir)/"; fi; \
+	  echo "$$d$$p"; \
+	done | $(am__base_list) | \
+	while read files; do \
+	  echo " $(INSTALL_DATA) $$files '$(DESTDIR)$(zshcompletiondir)'"; \
+	  $(INSTALL_DATA) $$files "$(DESTDIR)$(zshcompletiondir)" || exit $$?; \
+	done
+
+uninstall-nodist_zshcompletionDATA:
+	@$(NORMAL_UNINSTALL)
+	@list='$(nodist_zshcompletion_DATA)'; test -n "$(zshcompletiondir)" || list=; \
+	files=`for p in $$list; do echo $$p; done | sed -e 's|^.*/||'`; \
+	dir='$(DESTDIR)$(zshcompletiondir)'; $(am__uninstall_files_from_dir)
 tags TAGS:
 
 ctags CTAGS:
@@ -328,7 +359,7 @@ check-am: all-am
 check: check-am
 all-am: Makefile $(DATA)
 installdirs:
-	for dir in "$(DESTDIR)$(bashcompletiondir)"; do \
+	for dir in "$(DESTDIR)$(bashcompletiondir)" "$(DESTDIR)$(zshcompletiondir)"; do \
 	  test -z "$$dir" || $(MKDIR_P) "$$dir"; \
 	done
 install: install-am
@@ -382,7 +413,8 @@ info: info-am
 
 info-am:
 
-install-data-am: install-nodist_bashcompletionDATA
+install-data-am: install-nodist_bashcompletionDATA \
+	install-nodist_zshcompletionDATA
 
 install-dvi: install-dvi-am
 
@@ -426,7 +458,8 @@ ps: ps-am
 
 ps-am:
 
-uninstall-am: uninstall-nodist_bashcompletionDATA
+uninstall-am: uninstall-nodist_bashcompletionDATA \
+	uninstall-nodist_zshcompletionDATA
 
 .MAKE: install-am install-strip
 
@@ -436,17 +469,22 @@ uninstall-am: uninstall-nodist_bashcompletionDATA
 	install-data-am install-dvi install-dvi-am install-exec \
 	install-exec-am install-html install-html-am install-info \
 	install-info-am install-man install-nodist_bashcompletionDATA \
-	install-pdf install-pdf-am install-ps install-ps-am \
-	install-strip installcheck installcheck-am installdirs \
-	maintainer-clean maintainer-clean-generic mostlyclean \
-	mostlyclean-generic pdf pdf-am ps ps-am tags-am uninstall \
-	uninstall-am uninstall-nodist_bashcompletionDATA
+	install-nodist_zshcompletionDATA install-pdf install-pdf-am \
+	install-ps install-ps-am install-strip installcheck \
+	installcheck-am installdirs maintainer-clean \
+	maintainer-clean-generic mostlyclean mostlyclean-generic pdf \
+	pdf-am ps ps-am tags-am uninstall uninstall-am \
+	uninstall-nodist_bashcompletionDATA \
+	uninstall-nodist_zshcompletionDATA
 
 .PRECIOUS: Makefile
 
 @BASH_COMPLETION_TRUE@dep: $(srcdir)/dep.completion.in $(top_srcdir)/src/dep
 @BASH_COMPLETION_TRUE@	cat $(srcdir)/dep.completion.in > dep
 @BASH_COMPLETION_TRUE@	bash $(top_srcdir)/src/dep --exec 'for n in count short long type itype; do declare -p shopt_$$n; done' | sed 's/shopt_/_dep_completion_shopt_/' >> dep
+@ZSH_COMPLETION_TRUE@_dep: $(srcdir)/dep.zsh.in $(top_srcdir)/src/dep $(srcdir)/dump-zsh-options.sh
+@ZSH_COMPLETION_TRUE@	cat $(srcdir)/dep.zsh.in > _dep
+@ZSH_COMPLETION_TRUE@	bash $(srcdir)/dump-zsh-options.sh $(top_srcdir)/src/dep 2>/dev/null >> _dep
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

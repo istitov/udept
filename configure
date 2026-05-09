@@ -591,6 +591,8 @@ PACKAGE_URL=''
 
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+ZSH_COMPLETION_FALSE
+ZSH_COMPLETION_TRUE
 BASH_COMPLETION_FALSE
 BASH_COMPLETION_TRUE
 am__xargs_n
@@ -670,6 +672,7 @@ ac_user_opts='
 enable_option_checking
 enable_silent_rules
 enable_bash_completion
+enable_zsh_completion
 '
       ac_precious_vars='build_alias
 host_alias
@@ -1301,6 +1304,8 @@ Optional Features:
   --disable-silent-rules  verbose build output (undo: "make V=0")
   --disable-bash-completion
                           don't install bash completion
+  --disable-zsh-completion
+                          don't install zsh completion
 
 Report bugs to the package provider.
 _ACEOF
@@ -2798,6 +2803,24 @@ else
 fi
 
 
+# Check whether --enable-zsh-completion was given.
+if test ${enable_zsh_completion+y}
+then :
+  enableval=$enable_zsh_completion;
+else case e in #(
+  e) enable_zsh_completion=yes ;;
+esac
+fi
+
+ if test x$enable_zsh_completion = xyes; then
+  ZSH_COMPLETION_TRUE=
+  ZSH_COMPLETION_FALSE='#'
+else
+  ZSH_COMPLETION_TRUE='#'
+  ZSH_COMPLETION_FALSE=
+fi
+
+
 ac_config_files="$ac_config_files Makefile doc/Makefile src/Makefile src/dep completion/Makefile packaging/Makefile"
 
 cat >confcache <<\_ACEOF
@@ -2929,6 +2952,10 @@ fi
 
 if test -z "${BASH_COMPLETION_TRUE}" && test -z "${BASH_COMPLETION_FALSE}"; then
   as_fn_error $? "conditional \"BASH_COMPLETION\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${ZSH_COMPLETION_TRUE}" && test -z "${ZSH_COMPLETION_FALSE}"; then
+  as_fn_error $? "conditional \"ZSH_COMPLETION\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 

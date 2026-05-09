@@ -1,0 +1,158 @@
+#compdef dep
+# vim:set ts=4 sw=4 syn=zsh:
+#
+# zsh completion for dep (udept). Mirrors the bash completion's
+# build model: this static driver plus a build-time appended dump
+# of dep's option tables (the same arrays src/dep.in:170 ff. drive
+# --help and the man page generator out of). Adding/renaming an
+# 'arg ...' line in src/dep.in flows through to all three on the
+# next 'make'.
+#
+# The dumped data lands as parallel zsh arrays:
+#   __dep_short[i], __dep_long[i], __dep_desc[i],
+#   __dep_type[i], __dep_itype[i], __dep_category[i]
+# all sized __dep_count. See the bottom of this file post-build
+# for the actual values.
+
+_dep() {
+	local context state line
+	typeset -A opt_args
+	local -a specs
+	_dep_build_specs
+	_arguments -s -S "${specs[@]}"
+}
+
+# Translate the option-table arrays into _arguments specs once at
+# function load. The result is cached in $specs (caller-local) and
+# fed to _arguments. This runs per shell invocation — cheap for
+# ~40 options, no need to memoise across calls.
+_dep_build_specs() {
+	local i short long desc type itype category s spec action
+
+	for ((i=1; i<=__dep_count; i++)); do
+		short="${__dep_short[$i]}"
+		long="${__dep_long[$i]}"
+		desc="${__dep_desc[$i]}"
+		type="${__dep_type[$i]}"
+		itype="${__dep_itype[$i]}"
+		category="${__dep_category[$i]}"
+
+		# Skip entries with no long form (--exec is bash-completion-
+		# specific and dep handles it specially anyway).
+		[[ -n "$long" ]] || continue
+		# Brackets in the description would terminate the _arguments
+		# desc field early — escape them.
+		desc="${desc//\[/\\[}"
+		desc="${desc//\]/\\]}"
+
+		# Argument-action clause for options that take a value.
+		action=""
+		case "$category" in
+			opt)
+				case "$itype" in
+					BINARY) action="=:bool:(yes no)" ;;
+					NUMBER) action="=:number:" ;;
+					"") ;;
+					*)
+						# comma-separated allowed values, e.g. yes,no,auto,html
+						action="=:value:(${itype//,/ })" ;;
+				esac
+				;;
+			action|info)
+				case "$type" in
+					PNAME|PACKAGE|"PNAME,PACKAGE"|"PACKAGE,PNAME")
+						action="=:package:_dep_pkg" ;;
+					LEGION|"PACKAGE LEGION"|"PNAME,PACKAGE LEGION")
+						action="*:package:_dep_pkg" ;;
+					VIRTUAL) action="=:virtual:_dep_virt" ;;
+					"FILE,STRING"|FILE) action="=:file:_files" ;;
+					DIRECTORY) action="=:directory:_files -/" ;;
+					CATEGORY) action="=:category:_dep_cat" ;;
+					USE) action="=:use flag:_dep_use" ;;
+					XPACKAGE) action="=:installed package:_dep_xpkg" ;;
+					STRING) action="=:string:" ;;
+				esac
+				;;
+		esac
+
+		# Build the spec. Prefer paired short+long when a single-char
+		# short letter is available; some entries carry multi-char
+		# shorts like 'h?' (help / usage), in which case we take just
+		# the first character.
+		s=""
+		if [[ -n "$short" ]]; then
+			s="${short[1]}"
+			[[ "$s" == "?" ]] && s=""
+		fi
+		if [[ -n "$s" ]]; then
+			spec="(-${s} --${long})"'{-'${s}',--'${long}'}['"${desc}"']'"${action}"
+		else
+			spec="--${long}[${desc}]${action}"
+		fi
+		specs+=("$spec")
+	done
+}
+
+# Below: helper completion functions for the per-type actions used
+# in the spec above. Each shells out to 'dep --exec' with a small
+# bash snippet that walks /var/db/pkg and $portage_trees — same
+# pattern as the bash completion, kept short by relying on dep's
+# own loaded environment for $portage_trees / $VARDB_DIR / etc.
+
+# PNAME completion — 'bash' or 'sys-apps/bash' style.
+_dep_pkg() {
+	local -a packages
+	local prefix="${PREFIX-}"
+	packages=( ${(f)"$(dep --exec '
+c="'"${prefix}"'"
+if [[ "$c" == */* ]]; then
+	for x in $portage_trees; do for y in $x/$c*; do [[ -d "$y" ]] || continue; echo "${y#$x/}"; done; done
+	for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done
+else
+	for x in $portage_trees; do for y in $x/*/$c*; do [[ -d "$y" ]] || continue; echo "${y##*/}"; done; done
+	for x in ${VARDB_DIR}/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done
+fi; exit 0' 2>/dev/null)"} )
+	_describe -t packages 'package' packages
+}
+
+# XPACKAGE — installed-only (vardb), the type used by -f / --contents.
+_dep_xpkg() {
+	local -a packages
+	local prefix="${PREFIX-}"
+	packages=( ${(f)"$(dep --exec '
+c="'"${prefix}"'"
+if [[ "$c" == */* ]]; then
+	for x in ${VARDB_DIR}/$c*; do [[ -d "$x" ]] || continue; echo ${x#${VARDB_DIR}/}; done
+else
+	for x in ${VARDB_DIR}/*/$c*; do [[ -d "$x" ]] || continue; echo ${x##*/}; done
+fi; exit 0' 2>/dev/null)"} )
+	_describe -t packages 'installed package' packages
+}
+
+# VIRTUAL — virtual/* category packages.
+_dep_virt() {
+	local -a virtuals
+	virtuals=( ${(f)"$(dep --exec '
+allvirtuals 2>/dev/null | while read v rest; do echo "${v#virtual/}"; done; exit 0' 2>/dev/null)"} )
+	_describe -t virtuals 'virtual' virtuals
+}
+
+# CATEGORY — sys-apps, dev-libs, etc.
+_dep_cat() {
+	local -a cats
+	cats=( ${(f)"$(dep --exec 'echo $categories; exit 0' 2>/dev/null | tr ' ' '\n' | sort -u)"} )
+	_describe -t categories 'category' cats
+}
+
+# USE flag — read from profile use.desc + use.local.desc.
+_dep_use() {
+	local -a uses
+	uses=( ${(f)"$(dep --exec '
+cat $(profile_files_extra use.desc 2>/dev/null) $(profile_files_extra use.local.desc 2>/dev/null) 2>/dev/null \
+| while read use rest; do echo "${use##*:}"; done | sort -u; exit 0' 2>/dev/null)"} )
+	_describe -t use_flags 'USE flag' uses
+}
+
+_dep "$@"
+
+# --- Build-appended option-table dump below this line ---------------
