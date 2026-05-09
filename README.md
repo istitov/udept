@@ -70,7 +70,29 @@ that brings the tool back in line with current Portage:
 The 0.6.0 work was carried out with heavy use of the Claude
 large-language model (Anthropic) as a coding assistant; every change
 was reviewed by hand and validated against a smoke-test harness before
-landing. See `ChangeLog` for the per-phase commit history.
+landing.
+
+The **0.7.0** release (2026) builds on the modernization:
+
+- slot-aware reverse-dependency filtering — `dep -L cat/pkg-version`
+  filters revdeps to those satisfied by the package's installed
+  slot; `dep -L cat/pkg` (without a version) stays slot-agnostic;
+- a new `--required-use` (`-Q`) info action that reads `REQUIRED_USE`
+  from the md5-cache, evaluates against active USE, and reports
+  any unsatisfied clauses;
+- a `--full-atoms` flag that, paired with `--for-emerge`, appends
+  `:slot::repo` to emitted atoms;
+- a native zsh completion alongside the bash one;
+- a 200-test bats unit suite (`make check`) and a smoke-harness
+  regression net (`make smoke` / `make smoke-diff`) with stage3
+  baseline diffing in CI.
+
+The 0.7.0 work, like 0.6.0, was carried out with heavy use of the
+Claude large-language model (Anthropic) as a coding assistant; every
+change was reviewed by hand and validated against the bats unit
+suite and the smoke-harness regression net before landing.
+
+See `ChangeLog` for the full per-release history.
 
 ## Other known repositories
 
@@ -93,7 +115,7 @@ landing. See `ChangeLog` for the per-phase commit history.
 Standard autotools:
 
 ```sh
-./configure              # --disable-bash-completion to skip completion
+./configure              # --disable-{bash,zsh}-completion to skip either
 make
 sudo make install
 ```

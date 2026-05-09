@@ -1,12 +1,12 @@
 udept smoke harness — 2026-05-09T10:47:31Z
-dep version: dep v. 0.6.0 "The Treadmill Was Always Going To Win"
+dep version: dep v. 0.7.0 "Patched All The Way Down"
 host: Linux 6.17.0-1010-azure x86_64
 PORTAGE=sys-apps/portage-3.0.77-r4 BASH=app-shells/bash-5.3_p9-r1 PYTHON=dev-lang/python-3.13.12 GLIBC=sys-libs/glibc-2.42-r5 VIRTUAL_EDITOR=virtual/editor-0-r7 VIRTUAL_LIBC=virtual/libc-1-r1
 
 === usage ===
 $ dep --colour=no --usage
-[exit=0 lines=7 sha=78aeca852281]
-dep v. 0.6.0 "The Treadmill Was Always Going To Win"
+[exit=0 lines=7 sha=d58afffc5837]
+dep v. 0.7.0 "Patched All The Way Down"
     an inappropriate Portage engine!
 
 Usage: dep [OPTION]... [ACTION | INFO-TYPE [PACKAGE | VIRTUAL | FILE | USE | 
@@ -16,14 +16,14 @@ and the set of installed packages.
 
 === version ===
 $ dep --colour=no --version
-[exit=0 lines=1 sha=86ada633ab0c]
-dep v. 0.6.0 "The Treadmill Was Always Going To Win"
+[exit=0 lines=1 sha=02147d20cd30]
+dep v. 0.7.0 "Patched All The Way Down"
 
 === help ===
 $ dep --colour=no --help
-[exit=0 lines=68 sha=d6df52995dbc]
+[exit=0 lines=68 sha=263f6a187bf6]
 
-dep v. 0.6.0 "The Treadmill Was Always Going To Win"
+dep v. 0.7.0 "Patched All The Way Down"
     an inappropriate Portage engine!
 
 Usage: dep [OPTION]... [ACTION | INFO-TYPE [PACKAGE | VIRTUAL | FILE | USE | 

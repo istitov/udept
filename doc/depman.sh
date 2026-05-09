@@ -78,6 +78,19 @@ List versions of sys-apps/portage.
 .TP
 dep -Ln python
 Display installed and uninstalled packages that depend on python.
+.TP
+dep -L dev-lang/python-3.13.13_p1
+Display revdeps of python that specifically depend on slot 3.13
+(slot-aware revdep filtering: cpv input narrows to the matching
+SLOT, bare cp input stays slot-agnostic).
+.TP
+dep -Q sys-apps/portage
+Check sys-apps/portage's REQUIRED_USE clause against active USE
+flags; reports unsatisfied clauses, exits non-zero on any failure.
+.TP
+dep -1 --full-atoms -l sys-apps/portage
+Emit dependencies of portage as fully-qualified emerge atoms
+(=cat/pkg-version:slot::repo) suitable for piping into emerge.
 .SH FILES
 .PP
 /var/db/pkg
@@ -89,12 +102,13 @@ Display installed and uninstalled packages that depend on python.
 .PP
 portage(5), equery(1)
 .SH AUTHOR
-Written by Ed Catmur.
+Originally written by Ed Catmur (2004\\(en2006). Modernization
+(0.6.0 onwards) by Ivan S. Titov and contributors.
 .SH "REPORTING BUGS"
-Report bugs at <http://bugs\\&.catmur\\&.co\\&.uk/>, product udept. Check 
-<http://catmur\\&.co\\&.uk/gentoo/udept/> for updates and more information.
+Report bugs at <https://github\\&.com/istitov/udept/issues>.
 .SH COPYRIGHT
-Copyright \\(co 2006 Ed Catmur.
+Copyright \\(co 2004\\(en2006 Ed Catmur, 2026 Ivan S. Titov and
+contributors.
 .br
 This is free software.  You may redistribute copies of it under the terms of
 the GNU General Public License <http://www\\&.gnu\\&.org/licenses/gpl\\&.html>.

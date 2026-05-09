@@ -10,7 +10,7 @@ SRC_URI="https://github.com/istitov/udept/releases/download/${PV}/${P}.tar.xz"
 LICENSE="GPL-3"
 SLOT="0"
 KEYWORDS="~amd64 ~x86"
-IUSE="+bash-completion test"
+IUSE="+bash-completion +zsh-completion test"
 RESTRICT="!test? ( test )"
 
 RDEPEND="
@@ -18,9 +18,6 @@ RDEPEND="
 	>=sys-apps/portage-2.3.0
 	bash-completion? ( app-shells/bash-completion )
 "
-# Note: bats-assert and bats-support currently live in the GURU
-# overlay (::guru), not ::gentoo. Users emerging with USE=test must
-# have GURU enabled in /etc/portage/repos.conf.
 BDEPEND="
 	>=app-shells/bash-4.2:0
 	test? (
@@ -33,7 +30,9 @@ BDEPEND="
 DOCS=( ChangeLog README.md )
 
 src_configure() {
-	econf $(use_enable bash-completion)
+	econf \
+		$(use_enable bash-completion) \
+		$(use_enable zsh-completion)
 }
 
 src_test() {

@@ -1,6 +1,6 @@
-AC_INIT(udept, 0.6.0)
-AC_SUBST(PACKAGE_TAG, ["The Treadmill Was Always Going To Win"])
-AM_INIT_AUTOMAKE([dist-bzip2])
+AC_INIT(udept, 0.7.0)
+AC_SUBST(PACKAGE_TAG, ["Patched All The Way Down"])
+AM_INIT_AUTOMAKE([dist-xz no-dist-gzip foreign])
 
 AC_ARG_ENABLE(bash-completion, AS_HELP_STRING([--disable-bash-completion],
 	      [don't install bash completion]), [],

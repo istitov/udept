@@ -1,0 +1,45 @@
+udept Authors
+=============
+
+Original author (2004-2007, SVN era):
+
+    Ed Catmur <ed@catmur.co.uk>
+
+Modernization (0.6.0 onwards):
+
+    istitov/udept                   https://github.com/istitov/udept
+        Ivan S. Titov <iohann.s.titov@gmail.com> — modernization
+        pass against current Portage on top of the init-6 import:
+        modern atoms, md5-cache, BDEPEND/IDEPEND, virtuals/*
+        category, EROOT, the test infrastructure (bats + smoke
+        harness), slot-aware revdep filtering, the REQUIRED_USE
+        evaluator, and zsh completion. See the 0.6.0 and 0.7.0
+        entries in ChangeLog for the per-release detail.
+
+        The 0.6.0 and 0.7.0 work was carried out with heavy use of
+        the Claude large-language model (Anthropic) as a coding
+        assistant; every change was reviewed by hand and validated
+        against the bats unit suite and the smoke-harness regression
+        net before landing.
+
+Forks whose work was incorporated:
+
+    init-6/udept                    https://gitlab.com/init-6/udept
+        Andrey Ovcharov <sudormrfhalt@gmail.com> imported Ed's 2006
+        SVN codebase to git, applied two queued gentoo-bugzilla
+        patches that never went upstream (default-use, bug #172611
+        comment 9; svn-1638, bug #172611 comment 10), fixed
+        make.conf location handling, and made misc cleanups. The
+        init-6 branch was the immediate ancestor of this repo's
+        modernization line — without it the 2006 codebase would
+        have been even harder to pick up.
+
+Other forks reviewed but with no commits incorporated:
+
+    lkraav/udept                    https://github.com/lkraav/udept
+        A separate community fork from the dormant period;
+        reviewed for overlapping work but the modernization pass
+        took its own path.
+
+See ChangeLog for per-release contributor detail and README.md for
+project context.
