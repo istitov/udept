@@ -20,3 +20,9 @@ COPYING
 
 # editor / IDE / agent state
 .claude/
+
+# local smoke-test baselines — per-host snapshots that include the
+# system's installed-package inventory and aren't portable between
+# machines. 'make smoke-baseline' writes the default path here.
+tests/baseline.local
+tests/baseline.local.*
