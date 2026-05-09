@@ -186,9 +186,15 @@ jobs:
       # the maintainer needs to update the baseline. Retention 30 days
       # is a balance between debugging window and storage cost; CI runs
       # a few times per week, so 30 days covers ~4 baseline-update cycles.
+      #
+      # v7 runs on Node.js 24 (v4 was Node 20 → deprecation warning;
+      # v6 was the first Node-24 release). v7 adds an opt-in 'archive:
+      # false' for uploading unzipped single files; default zipped
+      # behavior is unchanged from v4, so 'gh run download' still
+      # extracts to the same file path.
       - name: upload smoke snapshot artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-snapshot-${{ github.sha }}
           path: /tmp/smoke-snapshot.txt
