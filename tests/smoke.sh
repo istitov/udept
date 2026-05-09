@@ -41,6 +41,18 @@ run() {
 	local out rc lines hash
 	out=$(timeout "$timeout" "$DEP" --colour=no "$@" 2>&1)
 	rc=$?
+	# Strip lines that are inherently unstable across runs but mean
+	# nothing for regression detection:
+	#   - 'time eval' wall-clock output emitted by '--exec' actions
+	#     (lines starting 'real 0m...', 'user ...', 'sys ...').
+	#   - 'Return value: N' / 'Return value: N; RESULT: ...' boilerplate
+	#     from main()'s exec-action wrapper.
+	# These only appear in '--exec' sections in practice but the filter
+	# is harmless elsewhere — regular dep output never starts a line
+	# with the literal 'real 0m' / 'user 0m' / 'sys 0m' / 'Return value: '
+	# patterns. Filtering here (not in smoke-diff.sh) keeps the captured
+	# line count and sha256 stable across runs.
+	out=$(printf '%s\n' "$out" | sed -E '/^(real|user|sys)[[:space:]]+[0-9]m/d; /^Return value: /d')
 	(( rc == 124 )) && out="${out}"$'\n[timed out after '$timeout's]'
 	lines=$(printf '%s\n' "$out" | wc -l)
 	hash=$(printf '%s' "$out" | sha256sum | cut -c1-12)
@@ -74,6 +86,24 @@ PYTHON=$(pick_glob dev-lang/python-3)
 GLIBC=$(pick_glob sys-libs/glibc)
 VIRTUAL_EDITOR=$(pick_glob virtual/editor)
 VIRTUAL_LIBC=$(pick_glob virtual/libc)
+
+# Loud-fail if pick_glob couldn't resolve a required target. set -u
+# alone doesn't catch this — the var is *set* by $(), just to an empty
+# string when pick_glob's subshell exits 1. Without this guard the
+# harness would silently produce 'No matches for ""' rows for every
+# command, look like it ran fine, and the resulting snapshot would be
+# meaningless. Covers fresh stage3 containers where one of these
+# prerequisites hasn't been emerged yet. virtual/editor and virtual/libc
+# stay optional — the call sites that use them already guard with
+# [[ "$VIRTUAL_..." ]].
+for _v in PORTAGE BASH_PKG PYTHON GLIBC; do
+	if [[ -z "${!_v}" ]]; then
+		echo "FATAL: smoke harness needs $_v resolved (got empty string)" >&2
+		echo "Install at least one matching package, or check /var/db/pkg." >&2
+		exit 1
+	fi
+done
+unset _v
 
 # A short package-name (PN) for actions that take PNAME
 PN_PORTAGE=portage
