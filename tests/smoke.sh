@@ -229,4 +229,4 @@ run 'purge/pretend'                       -Pp
 # For a stable smoke snapshot, drop the stderr half.
 run -t 300 'depclean/redundant'           --exec 'redundant 2>/dev/null'
 run 'filter-etc-portage'                  -E --ask=no --pretend
-run 'overlay-clean/missing'               -O /tmp/udept-nonexistent-overlay-$$
+run 'overlay-clean/missing'               -O /tmp/udept-nonexistent-overlay
