@@ -25,8 +25,8 @@ content line
 EOF
 	cp "$BASELINE" "$SNAPSHOT"
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 0 ]]
-	[[ -z "$output" ]]
+	assert_success
+	refute_output
 }
 
 @test "smoke-diff: only timestamp differs → exit 0 (filter strips it)" {
@@ -43,7 +43,7 @@ PORTAGE=foo BASH=bar PYTHON=baz
 content
 EOF
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 0 ]]
+	assert_success
 }
 
 @test "smoke-diff: only host kernel differs → exit 0" {
@@ -60,7 +60,7 @@ PORTAGE=foo BASH=bar PYTHON=baz
 content
 EOF
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 0 ]]
+	assert_success
 }
 
 @test "smoke-diff: real content change → exit 1, hunk in output" {
@@ -75,10 +75,10 @@ EOF
 bar
 EOF
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *"@@ "* ]]
-	[[ "$output" == *"-foo"* ]]
-	[[ "$output" == *"+bar"* ]]
+	assert_failure
+	assert_output --partial '@@ '
+	assert_output --partial '-foo'
+	assert_output --partial '+bar'
 }
 
 @test "smoke-diff: dep version line is signal, not noise" {
@@ -97,29 +97,29 @@ PORTAGE=foo
 content
 EOF
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *"-dep version: dep 0.6.0"* ]]
-	[[ "$output" == *"+dep version: dep 0.7.0"* ]]
+	assert_failure
+	assert_output --partial '-dep version: dep 0.6.0'
+	assert_output --partial '+dep version: dep 0.7.0'
 }
 
 @test "smoke-diff: missing baseline → exit 2, error to stderr" {
 	: >"$SNAPSHOT"
 	run "$SMOKE_DIFF" /nonexistent/baseline "$SNAPSHOT"
-	[[ "$status" -eq 2 ]]
-	[[ "$output" == *"baseline not found"* ]]
+	assert_equal "$status" 2
+	assert_output --partial 'baseline not found'
 }
 
 @test "smoke-diff: missing snapshot when given explicitly → exit 2" {
 	: >"$BASELINE"
 	run "$SMOKE_DIFF" "$BASELINE" /nonexistent/snapshot
-	[[ "$status" -eq 2 ]]
-	[[ "$output" == *"snapshot not found"* ]]
+	assert_equal "$status" 2
+	assert_output --partial 'snapshot not found'
 }
 
 @test "smoke-diff: no args → exit 2 with usage" {
 	run "$SMOKE_DIFF"
-	[[ "$status" -eq 2 ]]
-	[[ "$output" == *"usage:"* ]]
+	assert_equal "$status" 2
+	assert_output --partial 'usage:'
 }
 
 @test "smoke-diff: cross-environment PORTAGE → warning on stderr" {
@@ -134,9 +134,10 @@ PORTAGE=sys-apps/portage-99.99.99 BASH=app-shells/bash-9.9 PYTHON=dev-lang/pytho
 content
 EOF
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	# bats run captures stdout+stderr into $output; warning is on stderr.
-	[[ "$output" == *"different resolved targets"* ]]
-	[[ "$output" == *"Cross-environment diffs"* ]]
+	# 'run' captures stdout+stderr both into $output; the warning is on
+	# stderr but lands here regardless.
+	assert_output --partial 'different resolved targets'
+	assert_output --partial 'Cross-environment diffs'
 }
 
 @test "smoke-diff: same PORTAGE → no warning" {
@@ -147,8 +148,8 @@ content
 EOF
 	cp "$BASELINE" "$SNAPSHOT"
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 0 ]]
-	[[ "$output" != *"different resolved targets"* ]]
+	assert_success
+	refute_output --partial 'different resolved targets'
 }
 
 @test "smoke-diff: --label produces meaningful hunk path headers (no /dev/fd/N)" {
@@ -161,8 +162,8 @@ EOF
 bar
 EOF
 	run "$SMOKE_DIFF" "$BASELINE" "$SNAPSHOT"
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *"--- $BASELINE"* ]]
-	[[ "$output" == *"+++ $SNAPSHOT"* ]]
-	[[ "$output" != *"/dev/fd/"* ]]
+	assert_failure
+	assert_output --partial "--- $BASELINE"
+	assert_output --partial "+++ $SNAPSHOT"
+	refute_output --partial '/dev/fd/'
 }

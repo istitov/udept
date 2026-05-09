@@ -56,167 +56,197 @@ setup() {
 	FAKE_SATISFIABLE=""
 }
 
-# Helper: run crunch_depends on a tokenized input string. Bash's read
-# inside crunch_depends consumes stdin one token per line, so callers
-# heredoc multi-line input.
+# crunch_depends takes (cpv, ordeps) — cpv is passed to dbuse via our
+# mock so the value doesn't matter; ordeps controls ||-group resolution
+# mode. crunch_depends itself terminates with non-zero exit when
+# cd_evaluate_single hits EOF, so 'run' (which captures status without
+# tripping bats' set -e) is the right wrapper.
 crunch() {
-	# crunch_depends takes (cpv, ordeps) — cpv is passed to dbuse via
-	# our mock so the value doesn't matter; ordeps controls ||-group
-	# resolution mode.
 	crunch_depends 'cat/test-1.0' "${1-}"
 }
 
 # ----- bare atoms -------------------------------------------------------
 
 @test "crunch_depends: single bare atom passes through" {
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 cat/foo
 EOF
-)
 	# Output is '<atom> <taint>'; trailing space when taint is empty.
-	[[ "$out" == "cat/foo " ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output 'cat/foo '
 }
 
-@test "crunch_depends: multiple bare atoms each emit one line" {
-	out=$(crunch <<'EOF'
+@test "crunch_depends: multiple bare atoms each emit one line in order" {
+	run crunch <<'EOF'
 cat/foo
 cat/bar
 cat/baz
 EOF
-)
-	[[ "$(echo "$out" | wc -l)" -eq 3 ]]
-	[[ "$out" == *"cat/foo"* ]]
-	[[ "$out" == *"cat/bar"* ]]
-	[[ "$out" == *"cat/baz"* ]]
+	assert_equal "${#lines[@]}" 3
+	assert_line --index 0 'cat/foo '
+	assert_line --index 1 'cat/bar '
+	assert_line --index 2 'cat/baz '
 }
 
-@test "crunch_depends: blocker (!cat/pkg) passes through" {
-	out=$(crunch <<'EOF'
+@test "crunch_depends: blocker (!cat/pkg) passes through unchanged" {
+	run crunch <<'EOF'
 !cat/blocker
 EOF
-)
-	[[ "$out" == "!cat/blocker "* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output '!cat/blocker '
 }
 
 @test "crunch_depends: empty input → no output" {
-	out=$(crunch </dev/null)
-	[[ -z "$out" ]]
+	run crunch </dev/null
+	refute_output
 }
 
 # ----- USE-conditionals -------------------------------------------------
 
 @test "crunch_depends: 'flag?' gates inner atom when flag IS active" {
 	FAKE_USE="myflag"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 cat/gated
 EOF
-)
-	[[ "$out" == "cat/gated  myflag?"* ]]
+	assert_equal "${#lines[@]}" 1
+	# Output: '<atom> <taint>' where taint accumulates ' myflag?'
+	assert_output --regexp '^cat/gated +myflag\?'
 }
 
 @test "crunch_depends: 'flag?' discards inner atom when flag NOT active" {
 	FAKE_USE="other"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 cat/gated
 EOF
-)
-	[[ -z "$out" ]]
+	refute_output
 }
 
 @test "crunch_depends: '!flag?' gates inner when flag NOT active" {
 	FAKE_USE="other"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 !myflag?
 cat/gated
 EOF
-)
-	[[ "$out" == "cat/gated  !myflag?"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --regexp '^cat/gated +!myflag\?'
 }
 
 @test "crunch_depends: '!flag?' discards when flag IS active" {
 	FAKE_USE="myflag"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 !myflag?
 cat/gated
 EOF
-)
-	[[ -z "$out" ]]
+	refute_output
 }
 
 @test "crunch_depends: USE-conditional only gates ONE token (or one group)" {
 	# 'flag?' followed by two atoms: only the first is gated.
 	# Second atom is independent.
 	FAKE_USE="other"  # myflag inactive → first atom dropped
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 cat/gated
 cat/independent
 EOF
-)
-	[[ "$out" != *"gated"* ]]
-	[[ "$out" == *"cat/independent"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output 'cat/independent '
+	refute_output --partial 'cat/gated'
 }
 
 @test "crunch_depends: nested USE-conditionals accumulate taint" {
 	FAKE_USE="outer inner"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 outer?
 inner?
 cat/deeply-gated
 EOF
-)
-	# Both flags active → atom emitted with both in taint.
-	[[ "$out" == *"cat/deeply-gated"* ]]
-	[[ "$out" == *"outer?"* ]]
-	[[ "$out" == *"inner?"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/deeply-gated'
+	assert_output --partial 'outer?'
+	assert_output --partial 'inner?'
 }
 
 # ----- groups -----------------------------------------------------------
 
 @test "crunch_depends: '( a b c )' evaluates each atom inside" {
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 (
 cat/foo
 cat/bar
 )
 EOF
+	assert_equal "${#lines[@]}" 2
+	assert_output --partial 'cat/foo'
+	assert_output --partial 'cat/bar'
+}
+
+@test "crunch_depends: empty group '( )' emits nothing and doesn't crash" {
+	# Defensive — ebuild authors don't write '( )' on purpose, but a
+	# preprocessing bug or odd indirection could produce one.
+	run crunch <<'EOF'
+(
 )
-	[[ "$out" == *"cat/foo"* ]]
-	[[ "$out" == *"cat/bar"* ]]
+cat/sibling
+EOF
+	# Just the sibling, no spurious empty-group atoms.
+	assert_equal "${#lines[@]}" 1
+	assert_output 'cat/sibling '
 }
 
 @test "crunch_depends: 'flag? ( a b )' gates whole group" {
 	FAKE_USE="myflag"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 (
 cat/foo
 cat/bar
 )
 EOF
-)
-	[[ "$out" == *"cat/foo"* ]]
-	[[ "$out" == *"cat/bar"* ]]
-	[[ "$out" == *"myflag?"* ]]
+	assert_equal "${#lines[@]}" 2
+	assert_output --partial 'cat/foo'
+	assert_output --partial 'cat/bar'
+	# Both rows carry myflag? in taint.
+	[[ $(grep -c 'myflag?' <<<"$output") -eq 2 ]]
 }
 
 @test "crunch_depends: 'flag? ( a b )' drops whole group when flag inactive" {
 	FAKE_USE=""
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 (
 cat/foo
 cat/bar
 )
 EOF
+	refute_output
+}
+
+@test "crunch_depends: 'flag? ( a ( b ) c )' deeply skips when inactive" {
+	# cd_discard_single's depth-tracking: must consume the inner group too,
+	# not stop at the first ')' it sees. Without correct depth handling,
+	# cat/sibling would be wrongly attached to the discarded group's
+	# context and dropped.
+	FAKE_USE=""
+	run crunch <<'EOF'
+myflag?
+(
+cat/a
+(
+cat/b
 )
-	[[ -z "$out" ]]
+cat/c
+)
+cat/sibling
+EOF
+	assert_equal "${#lines[@]}" 1
+	assert_output 'cat/sibling '
 }
 
 @test "crunch_depends: nested groups recurse correctly" {
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 (
 cat/outer
 (
@@ -225,10 +255,10 @@ cat/inner
 cat/sibling
 )
 EOF
-)
-	[[ "$out" == *"cat/outer"* ]]
-	[[ "$out" == *"cat/inner"* ]]
-	[[ "$out" == *"cat/sibling"* ]]
+	assert_equal "${#lines[@]}" 3
+	assert_output --partial 'cat/outer'
+	assert_output --partial 'cat/inner'
+	assert_output --partial 'cat/sibling'
 }
 
 # ----- || groups (default mode: pick first satisfiable) ----------------
@@ -236,48 +266,98 @@ EOF
 @test "crunch_depends: '|| ( a b )' picks first installed" {
 	FAKE_INSTALLED="cat/b"
 	FAKE_SATISFIABLE="cat/a cat/b"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 ||
 (
 cat/a
 cat/b
 )
 EOF
-)
 	# 'cat/a' is satisfiable but only 'cat/b' is installed; default-mode
 	# crunch_depends picks the installed one (cd_already_installed wins
-	# over cd_satisfiable).
-	[[ "$out" == *"cat/b"* ]]
-	[[ "$out" != *"cat/a"* ]]
+	# over cd_satisfiable). Exclusion check too: cat/a must NOT appear.
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/b'
+	refute_output --partial 'cat/a'
 }
 
 @test "crunch_depends: '|| ( a b )' falls back to first satisfiable when none installed" {
 	FAKE_INSTALLED=""
 	FAKE_SATISFIABLE="cat/b"  # only cat/b satisfiable
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 ||
 (
 cat/a
 cat/b
 )
 EOF
-)
-	[[ "$out" == *"cat/b"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/b'
+	refute_output --partial 'cat/a'
 }
 
 @test "crunch_depends: '|| ( a b )' falls back to first listed when nothing matches" {
 	FAKE_INSTALLED=""
 	FAKE_SATISFIABLE=""
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 ||
 (
 cat/a
 cat/b
 )
 EOF
-)
 	# Neither installed nor satisfiable — fallback is the first listed.
-	[[ "$out" == *"cat/a"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/a'
+	refute_output --partial 'cat/b'
+}
+
+@test "crunch_depends: '|| ( ( a b ) ( c d ) )' picks first whole group" {
+	# ||-of-groups: each group inside || is a single alternative; the
+	# parser should select the first whole group (when nothing's installed
+	# or satisfiable, default-mode picks first listed).
+	FAKE_INSTALLED=""
+	FAKE_SATISFIABLE=""
+	run crunch <<'EOF'
+||
+(
+(
+cat/a
+cat/b
+)
+(
+cat/c
+cat/d
+)
+)
+EOF
+	# First group emitted (cat/a + cat/b on one line because
+	# cd_evaluate_single emits group atoms together as a single ||-arm).
+	assert_output --partial 'cat/a'
+	assert_output --partial 'cat/b'
+	refute_output --partial 'cat/c'
+	refute_output --partial 'cat/d'
+}
+
+@test "crunch_depends: '|| ( !cat/foo cat/bar )' handles blocker alternative" {
+	# Blockers are valid in ||-groups — '|| ( !A B )' means "A must not
+	# be installed OR B is satisfied". cd_already_installed strips the
+	# leading '!' before resolve_depatom and inverts the test, so a
+	# blocker resolves as 'installed' iff the named package is NOT
+	# installed.
+	FAKE_INSTALLED=""              # cat/foo NOT installed, so '!cat/foo' satisfied
+	FAKE_SATISFIABLE="cat/bar"     # cat/bar satisfiable too
+	run crunch <<'EOF'
+||
+(
+!cat/foo
+cat/bar
+)
+EOF
+	# !cat/foo is "already installed" (its package isn't there → blocker
+	# is satisfied) so it wins as the first installed alternative.
+	assert_output --partial '!cat/foo'
+	refute_output --partial 'cat/bar'
 }
 
 # ----- || groups (--with-or-deps=all and =safe modes) ------------------
@@ -285,7 +365,7 @@ EOF
 @test "crunch_depends: ordeps=all → emit every alternative in '|| ( a b c )'" {
 	FAKE_INSTALLED=""
 	FAKE_SATISFIABLE="cat/a cat/b cat/c"
-	out=$(crunch all <<'EOF'
+	run crunch all <<'EOF'
 ||
 (
 cat/a
@@ -293,26 +373,26 @@ cat/b
 cat/c
 )
 EOF
-)
-	[[ "$out" == *"cat/a"* ]]
-	[[ "$out" == *"cat/b"* ]]
-	[[ "$out" == *"cat/c"* ]]
+	assert_equal "${#lines[@]}" 3
+	assert_output --partial 'cat/a'
+	assert_output --partial 'cat/b'
+	assert_output --partial 'cat/c'
 }
 
 @test "crunch_depends: ordeps=safe with single alternative → emit it" {
-	out=$(crunch safe <<'EOF'
+	run crunch safe <<'EOF'
 ||
 (
 cat/only
 )
 EOF
-)
-	[[ "$out" == *"cat/only"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/only'
 }
 
 @test "crunch_depends: ordeps=safe with exactly-one-installed → emit only that" {
 	FAKE_INSTALLED="cat/b"
-	out=$(crunch safe <<'EOF'
+	run crunch safe <<'EOF'
 ||
 (
 cat/a
@@ -320,37 +400,35 @@ cat/b
 cat/c
 )
 EOF
-)
-	[[ "$out" == *"cat/b"* ]]
-	[[ "$out" != *"cat/a"* ]]
-	[[ "$out" != *"cat/c"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/b'
+	refute_output --partial 'cat/a'
+	refute_output --partial 'cat/c'
 }
 
 @test "crunch_depends: ordeps=safe with multiple-installed → emit nothing (ambiguous)" {
 	FAKE_INSTALLED="cat/a cat/b"
-	out=$(crunch safe <<'EOF'
+	run crunch safe <<'EOF'
 ||
 (
 cat/a
 cat/b
 )
 EOF
-)
 	# Ambiguous → safe mode declines to pick.
-	[[ -z "$out" ]]
+	refute_output
 }
 
 @test "crunch_depends: ordeps=safe with none-installed and >1 alternative → emit nothing" {
 	FAKE_INSTALLED=""
-	out=$(crunch safe <<'EOF'
+	run crunch safe <<'EOF'
 ||
 (
 cat/a
 cat/b
 )
 EOF
-)
-	[[ -z "$out" ]]
+	refute_output
 }
 
 # ----- combined ---------------------------------------------------------
@@ -359,7 +437,7 @@ EOF
 	FAKE_USE="myflag"
 	FAKE_INSTALLED="cat/b"
 	FAKE_SATISFIABLE="cat/a cat/b"
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 (
 ||
@@ -369,23 +447,25 @@ cat/b
 )
 )
 EOF
-)
 	# Group is gated by myflag (active), || picks installed cat/b,
 	# and the resulting atom carries 'myflag?' in its taint.
-	[[ "$out" == *"cat/b"* ]]
-	[[ "$out" == *"myflag?"* ]]
+	assert_equal "${#lines[@]}" 1
+	assert_output --partial 'cat/b'
+	assert_output --partial 'myflag?'
+	refute_output --partial 'cat/a'
 }
 
 @test "crunch_depends: bare atoms after USE-conditional are unaffected" {
 	FAKE_USE=""  # myflag inactive
-	out=$(crunch <<'EOF'
+	run crunch <<'EOF'
 myflag?
 cat/gated
 cat/free
 cat/also-free
 EOF
-)
-	[[ "$out" != *"gated"* ]]
-	[[ "$out" == *"cat/free"* ]]
-	[[ "$out" == *"cat/also-free"* ]]
+	# Only cat/free + cat/also-free emitted; cat/gated dropped.
+	assert_equal "${#lines[@]}" 2
+	assert_output --partial 'cat/free'
+	assert_output --partial 'cat/also-free'
+	refute_output --partial 'cat/gated'
 }

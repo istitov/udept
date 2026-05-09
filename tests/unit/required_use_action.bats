@@ -37,8 +37,8 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE=""
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
-	[[ -z "$output" ]]
+	assert_success
+	refute_output
 }
 
 @test "info_action_required-use: empty REQUIRED_USE + verbose → 'OK (no REQUIRED_USE)'" {
@@ -47,8 +47,8 @@ _fake_extract_var_and_dbuse() {
 	_fake_extract_var_and_dbuse
 	opt_arg_verbose=1
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
-	[[ "$output" == *"OK (no REQUIRED_USE)"* ]]
+	assert_success
+	assert_output --partial 'OK (no REQUIRED_USE)'
 }
 
 @test "info_action_required-use: satisfied bare flag → silent OK" {
@@ -56,8 +56,8 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE="flag1 flag2"
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
-	[[ -z "$output" ]]
+	assert_success
+	refute_output
 }
 
 @test "info_action_required-use: satisfied + verbose → 'OK' (no '(no REQUIRED_USE)' suffix)" {
@@ -66,9 +66,9 @@ _fake_extract_var_and_dbuse() {
 	_fake_extract_var_and_dbuse
 	opt_arg_verbose=1
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
-	[[ "$output" == *"OK"* ]]
-	[[ "$output" != *"no REQUIRED_USE"* ]]
+	assert_success
+	assert_output --partial 'OK'
+	refute_output --partial 'no REQUIRED_USE'
 }
 
 @test "info_action_required-use: missing required flag → FAIL line, exit 1" {
@@ -76,9 +76,9 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE="other_flag"
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *FAIL* ]]
-	[[ "$output" == *missing_flag* ]]
+	assert_failure
+	assert_output --partial 'FAIL'
+	assert_output --partial 'missing_flag'
 }
 
 @test "info_action_required-use: ^^ ( a b ) with both set → FAIL, span captured" {
@@ -86,9 +86,11 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE="a b"
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *FAIL* ]]
-	[[ "$output" == *"^^ ( a b )"* ]]
+	assert_failure
+	assert_output --partial 'FAIL'
+	# The full span — head op plus group contents — is captured for the
+	# diagnostic, not just the head.
+	assert_output --partial '^^ ( a b )'
 }
 
 @test "info_action_required-use: || ( a b ) with one set → silent OK" {
@@ -96,8 +98,8 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE="a"
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
-	[[ -z "$output" ]]
+	assert_success
+	refute_output
 }
 
 @test "info_action_required-use: increments \$required_use_violations on fail" {
@@ -105,10 +107,12 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE=""
 	_fake_extract_var_and_dbuse
 	required_use_violations=0
-	# Run in current shell so $required_use_violations updates are visible
-	# (run() forks a subshell).
+	# Call directly (not via 'run') so $required_use_violations updates
+	# are visible in the test scope. 'run' would fork a subshell.
+	# '|| true' sinks the function's non-zero exit (set -e would otherwise
+	# abort the test before the assertion).
 	info_action_required-use 'cat/pkg-1.0' >/dev/null 2>&1 || true
-	[[ $required_use_violations -eq 1 ]]
+	assert_equal "$required_use_violations" 1
 }
 
 @test "info_action_required-use: does NOT increment counter on success" {
@@ -117,7 +121,7 @@ _fake_extract_var_and_dbuse() {
 	_fake_extract_var_and_dbuse
 	required_use_violations=0
 	info_action_required-use 'cat/pkg-1.0' >/dev/null 2>&1 || true
-	[[ $required_use_violations -eq 0 ]]
+	assert_equal "$required_use_violations" 0
 }
 
 @test "info_action_required-use: cond? ( inner ) skipped → silent OK" {
@@ -125,8 +129,8 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE="other"
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
-	[[ -z "$output" ]]
+	assert_success
+	refute_output
 }
 
 @test "info_action_required-use: cond? fires with missing inner → FAIL" {
@@ -134,9 +138,9 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE="active"
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *FAIL* ]]
-	[[ "$output" == *required* ]]
+	assert_failure
+	assert_output --partial 'FAIL'
+	assert_output --partial 'required'
 }
 
 @test "info_action_required-use: multiple top-level failures separated by '; '" {
@@ -144,17 +148,18 @@ _fake_extract_var_and_dbuse() {
 	FAKE_USE=""
 	_fake_extract_var_and_dbuse
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 1 ]]
-	[[ "$output" == *first* ]]
-	[[ "$output" == *second* ]]
-	[[ "$output" == *"; "* ]]
+	assert_failure
+	# Both failures present, separated by '; ', in source order.
+	assert_output --regexp 'first.*; .*second'
 }
 
 @test "info_action_required-use: extract_var failure (no md5-cache hit) → silent OK" {
 	# extract_var returning empty/non-zero is treated as 'no REQUIRED_USE',
 	# not as an error — the action is a check, not a probe.
+	# shellcheck disable=SC2317
 	extract_var() { return 1; }
+	# shellcheck disable=SC2317
 	dbuse() { echo ""; }
 	run info_action_required-use 'cat/pkg-1.0'
-	[[ "$status" -eq 0 ]]
+	assert_success
 }
