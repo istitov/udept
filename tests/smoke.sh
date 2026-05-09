@@ -189,6 +189,21 @@ run 'provides/portage'        -r "$PORTAGE"
 run 'exists/portage:bash'     -x "$PORTAGE" "$PN_BASH"
 run 'rev-exists/python:bash'  -X "$PN_PYTHON" "$PN_BASH"
 
+# --- Output-mode probes -------------------------------------------------
+# Lock in the format of the non-default colour modes. dep's run() above
+# always passes '--colour=no' first; later '--colour=...' on the args
+# wins (last value of any option flag in dep's parser semantics), so
+# these sections actually exercise the colour mode they name.
+#   - 'html' wraps output in <div>/<span class="..."> tags. Verifies the
+#     colorize machinery's HTML branch hasn't bit-rotted (it's used by
+#     downstream consumers that pipe dep into web-rendered docs).
+#   - 'auto' detects via tty / $TERM whether to emit ANSI; under a
+#     non-tty pipe (which is what we run under here) it emits no colour
+#     codes — so the snapshot for 'auto' should look indistinguishable
+#     from a 'no' run, locking that behavior in.
+run 'colour-html/info'  --colour=html -i "$PORTAGE"
+run 'colour-auto/info'  --colour=auto -i "$PORTAGE"
+
 # --- Error-format probes ------------------------------------------------
 # Lock in the shape of error output for unresolvable arguments. Any
 # regression that changes the error wording or exit status will surface

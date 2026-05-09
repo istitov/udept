@@ -292,7 +292,9 @@ EXTRA_DIST = \
 	tests/unit/world_sets_expand.bats \
 	tests/unit/format_atom_for_emerge.bats \
 	tests/unit/required_use.bats \
-	tests/unit/slot_satisfies.bats
+	tests/unit/required_use_action.bats \
+	tests/unit/slot_satisfies.bats \
+	tests/unit/smoke_diff.bats
 
 
 # 'make check' runs the bats unit-test suite. Override BATS to point at
