@@ -307,6 +307,10 @@ function handle_arg_info() {
 					changelog_entries=${optargs[$((++i))]}
 					[[ $changelog_entries == 0 ]] \
 						|| changelog_entries=${changelog_entries##+(0)}
+					# `continue` here targets the caller's argv `for` loop
+					# (around line 359) — bash propagates `continue` up
+					# through function calls to the nearest enclosing loop.
+					# shellcheck disable=SC2104
 					continue
 				fi
 			else
@@ -1097,7 +1101,7 @@ function accept_for() {
 	for keyword in "${extra_ks[@]}"; do
 		case "$keyword" in
 			-\*) accept_ks[${#accept_ks[@]}]="${keyword}";;
-			-*) for i in ${!accept_ks[@]}; do [[ "-${accept_ks[$i]}" == "${keyword}" ]] && unset accept_ks[$i]; done;;
+			-*) for i in "${!accept_ks[@]}"; do [[ "-${accept_ks[$i]}" == "${keyword}" ]] && unset 'accept_ks[$i]'; done;;
 			*) accept_ks[${#accept_ks[@]}]="${keyword}";;
 		esac
 	done
@@ -1197,7 +1201,7 @@ function extract_var() {
 	elif [[ -d ${VARDB_DIR}/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
 	else
-		format_error <<<"failed extract_var $* :: ${FUNCNAME[@]}" >&2
+		format_error <<<"failed extract_var $* :: ${FUNCNAME[*]}" >&2
 		return 1
 	fi
 }
@@ -1363,6 +1367,8 @@ function dbuse() {
 }
 
 # Compare two numbers as fractional parts of a decimal fraction.
+# Returns negative-as-mod-256 (see comm_ver below for the convention).
+# shellcheck disable=SC2151
 function comm_float() {
 	local f1="$1" f2="$2" i d1 d2
 	for ((i=0;i<${#f1}||i<${#f2};++i)); do
@@ -1373,17 +1379,23 @@ function comm_float() {
 	return 0
 }
 
-# Compare version specifiers s1, s2. Returns <0, 0, >0 if s1 is resp lower, 
+# Compare version specifiers s1, s2. Returns <0, 0, >0 if s1 is resp lower,
 # equal, higher than s2. Note that <0 actually means >127 (-1 -> 255, etc)
 # 0: equal; 1: differ in erev; 2: differ in status number; 3: differ in status;
 # 4: differ in letter; 5: differ in mmm length; 6: differ in mmm
 #
 # This needs to be kept equivalent to portage_versions.vercmp().
 #
-# NOTE: Portage considers e.g. 7.0 and 7.0.0 to be equivalent. Yes, I know, 
+# NOTE: Portage considers e.g. 7.0 and 7.0.0 to be equivalent. Yes, I know,
 # this sucks. HATE HATE HATE
 #
 # status code number: alpha->0, beta->1, pre->2, rc->3, (none)->4, p->5
+#
+# Negative returns (-1..-7) are intentional: bash truncates them mod 256
+# (so -1 -> 255), and the caller in vercmp() reads `>=128` to mean "less
+# than". Documented above; shellcheck rightly flags the construct but the
+# convention is load-bearing.
+# shellcheck disable=SC2151
 function comm_ver() {
 	local s1_mlsr="$1" s2_mlsr="$2"
 	[[ "$s1_mlsr" == "$s2_mlsr" ]] && return 0
@@ -1423,8 +1435,8 @@ function comm_ver() {
 		s1sci="${s1si/%*([[:digit:]])}"; s2sci="${s2si/%*([[:digit:]])}"
 		s1_scn="$((6-${#s1sci}))"; [[ $s1_scn -ge 4 ]] && s1_scn=$((10-$s1_scn))
 		s2_scn="$((6-${#s2sci}))"; [[ $s2_scn -ge 4 ]] && s2_scn=$((10-$s2_scn))
-		[[ "$s1_scn" < "$s2_scn" ]] && return -- -3
-		[[ "$s1_scn" > "$s2_scn" ]] && return 3
+		[[ "$s1_scn" -lt "$s2_scn" ]] && return -- -3
+		[[ "$s1_scn" -gt "$s2_scn" ]] && return 3
 		s1_sn="${s1si##${s1sci}*(0)}"
 		s2_sn="${s2si##${s2sci}*(0)}"
 		[[ "$s1_sn" -lt "$s2_sn" ]] && return -- -2
@@ -2826,7 +2838,7 @@ function info_action_info() {
 	for d in $ETC_PORTAGE_DIR/patches/$cat/$pn*; do
 		dn="${d##*/}"
 		[[ "$dn" == "$pn" || "$dn" == "$p" || "$dn" == "$p-$pr" \
-			|| "$dn" == "$pn[$slot]" || "${pv#$pn-}" == ${dn#$pn-} ]] \
+			|| "$dn" == "${pn}[$slot]" || "${pv#$pn-}" == ${dn#$pn-} ]] \
 			|| continue
 		for x in "$d"/*; do [[ -f "$x" ]] && patches[${#patches[@]}]="$x"; done
 	done
@@ -3796,7 +3808,7 @@ function inspect_patch_tree_check_data_is_highest_patched() {
 		local P="$pn-$mls" PN="$pn" PV="$mls" PR="${rev:-r0}" PVR="$mlsr"
 		local PF="$pn-$mlsr" SLOT="${mlsr_slots[$i]}"
 		[[ "$dn" == "$PN" || "$dn" == "$P" || "$dn" == "$P-$PR" \
-			|| "$dn" == "$PN[$SLOT]" || "$PVR" == ${dn#$PN-} ]] \
+			|| "$dn" == "${PN}[$SLOT]" || "$PVR" == ${dn#$PN-} ]] \
 			&& mlsr_match[$i]=$mlsr
 	done <<<"$(avail_versions "$cp" yes | mlsr_sort)"
 }
@@ -3999,7 +4011,7 @@ function main() {
 	case "$do_arg_action" in
 		exec ) 
 			time eval "${args[@]}"
-			echo $'\n'"Return value: $?; RESULT: ${RESULT[@]}" >&2;;
+			echo $'\n'"Return value: $?; RESULT: ${RESULT[*]}" >&2;;
 		purge | depclean )
 			my_redundant="$(redundant "${args[@]}")"
 			[[ "${my_redundant}" ]] \

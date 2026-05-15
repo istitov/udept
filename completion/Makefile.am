@@ -4,9 +4,12 @@ DISTCLEANFILES = dep _dep
 if BASH_COMPLETION
 nodist_bashcompletion_DATA = dep
 bashcompletiondir = $(datadir)/bash-completion/completions
-dep: $(srcdir)/dep.completion.in $(top_srcdir)/src/dep
+# src/dep is generated (config.status from dep.in), so it lives in the
+# builddir — top_srcdir breaks under distcheck's split srcdir/builddir
+# layout (the tarball ships only dep.in).
+dep: $(srcdir)/dep.completion.in $(top_builddir)/src/dep
 	cat $(srcdir)/dep.completion.in > dep
-	bash $(top_srcdir)/src/dep --exec 'for n in count short long type itype; do declare -p shopt_$$n; done' | sed 's/shopt_/_dep_completion_shopt_/' >> dep
+	bash $(top_builddir)/src/dep --exec 'for n in count short long type itype; do declare -p shopt_$$n; done' | sed 's/shopt_/_dep_completion_shopt_/' >> dep
 endif
 
 # zsh completion. Mirrors the bash rule's structure: static prefix
@@ -18,8 +21,8 @@ endif
 if ZSH_COMPLETION
 nodist_zshcompletion_DATA = _dep
 zshcompletiondir = $(datadir)/zsh/site-functions
-_dep: $(srcdir)/dep.zsh.in $(top_srcdir)/src/dep $(srcdir)/dump-zsh-options.sh
+_dep: $(srcdir)/dep.zsh.in $(top_builddir)/src/dep $(srcdir)/dump-zsh-options.sh
 	cat $(srcdir)/dep.zsh.in > _dep
-	bash $(srcdir)/dump-zsh-options.sh $(top_srcdir)/src/dep 2>/dev/null >> _dep
+	bash $(srcdir)/dump-zsh-options.sh $(top_builddir)/src/dep 2>/dev/null >> _dep
 endif
 
