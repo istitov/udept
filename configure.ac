@@ -1,5 +1,5 @@
-AC_INIT(udept, 0.7.0)
-AC_SUBST(PACKAGE_TAG, ["Patched All The Way Down"])
+AC_INIT(udept, 0.7.1)
+AC_SUBST(PACKAGE_TAG, ["Skeletons in the Cache"])
 AM_INIT_AUTOMAKE([dist-xz no-dist-gzip foreign])
 
 AC_ARG_ENABLE(bash-completion, AS_HELP_STRING([--disable-bash-completion],

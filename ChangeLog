@@ -1,3 +1,84 @@
+0.7.1 "Skeletons in the Cache" (20260516)
+
+	* fix: USE-resolution case-shadow (commit 8673115). The
+	  pkginternal and env.d cases in usecomponent() had empty
+	  placeholder branches above the real handlers, silently
+	  shadowing the dispatch (bash case takes the first match).
+	  Because the default USE_ORDER is
+	  'env:pkg:conf:defaults:pkginternal:env.d', every call to
+	  dbuse() walked through both shadowed tiers and produced
+	  nothing — udept had been doing USE resolution missing two
+	  of its six tiers since the modern-era refactor.
+	  pkginternal_use_for() was completely unreachable.
+	* fix: comm_ver typo s1_s/s2_s (commit 8aa2c90). The
+	  length-difference short-circuit at line 1442 referenced
+	  undefined variables ${s1_s} / ${s2_s} (typo for ${s1_ss} /
+	  ${s2_ss}). They expanded empty, so the comparison reduced
+	  to letter+revision only and skipped the status suffix.
+	  Effect: version pairs like 1.2_alpha1 vs 1.2.0_beta2
+	  returned equal — wrong.
+	* fix: virtual_version error mask (in commit 187de46).
+	  `local virtual_mlsr=$(virtual_version ...) || return` never
+	  fired the `|| return` clause because `local` always returns
+	  0 (the assignment-binding's success, not the inner command's
+	  exit). Failure of virtual_version was silently swallowed.
+	  Split decl from assign so the chain works.
+	* shellcheck: src/dep is now clean at --severity=error (CI
+	  gate) AND --severity=warning (down from 92 findings). The
+	  two intentional patterns kept as inline disables with
+	  rationale (SC2104 on the function-loop `continue` in
+	  handle_arg_info, SC2151 on the signed-magnitude negative-
+	  return convention in comm_float / comm_ver). The systemic
+	  word-splitting style suppressed in .shellcheckrc with
+	  per-rule explanation (SC2046 for `$(...)` lists fed to
+	  commands as separate args, SC2206 for whitespace-split
+	  array assignments, SC2229 for indirect `read -a "$return"`
+	  array assignment).
+	* build: CI switched from `make dist` to `make distcheck`
+	  (caught and fixed two srcdir/builddir bugs in doc/Makefile.am
+	  and completion/Makefile.am that pointed at $(top_srcdir)/
+	  src/dep for a generated file; broke under distcheck's split
+	  layout but invisible in-tree).
+	* tests: bats smoke tier introduced at tests/smoke/
+	  (test_helper.bash + 7 .bats files, 41 tests across help /
+	  info_actions / virtuals / existence / output_modes /
+	  errors / actions). Each test asserts exit status plus one
+	  stable structural marker. Reverse-walk tests accept timeout
+	  (exit 124) as a valid outcome alongside 0 on populated
+	  maintainer systems. `make check-smoke` target added.
+	* tests: +31 new unit tests pinning the bug fixes —
+	  tests/unit/comm_ver.bats (20) covers the s1_ss typo
+	  regression case + portage convention + status-class
+	  ordering + revision + letter suffix + vercmp wrapper
+	  contracts. tests/unit/usecomponent.bats (11) covers the
+	  case-shadow regression pin + pkginternal_use_for direct
+	  unit + env.d profile.env extraction. Total unit suite:
+	  200 -> 231.
+	* CI: tests/smoke.sh + tests/smoke-diff.sh + tests/baseline.ci
+	  remain in tree for local snapshot-diff work
+	  (`make smoke / smoke-baseline / smoke-diff`) but are no
+	  longer CI-gating — `make check-smoke` replaces them as the
+	  CI tier.
+	* docs: CONTRIBUTING.md, .editorconfig, .shellcheckrc, and
+	  .github/ISSUE_TEMPLATE/{bug_report,feature_request,config}
+	  ported from portconf's project-hygiene set, adapted for
+	  udept's actual tool surface (portageq + emerge, not eix +
+	  qatom).
+	* known bugs (deferred to 0.7.2): two more vercmp issues
+	  surfaced during the test-pinning pass — (a) rc-suffix
+	  mis-ordering: the status-code formula at lines 1465-1466
+	  produces rc=6 (highest), contradicting the function's own
+	  docstring (rc=3, between pre and release) and Portage's
+	  spec. (b) `1.0` vs `1.0-r0` aborts the script via exit 128
+	  because the empty-empty rev case falls through both `-lt`
+	  and `-gt` to the function's error-exit path. Documented in
+	  tests/unit/comm_ver.bats header; tests for both are
+	  omitted from this release to keep the suite green.
+	* AI-assisted: the 0.7.1 work, like 0.7.0 and 0.6.0, used
+	  Claude (Anthropic) as a coding assistant. Every change
+	  reviewed by hand and validated against the bats unit and
+	  smoke tiers plus `make distcheck`.
+
 0.7.0 "Patched All The Way Down" (20260509)
 
 	* slot-aware revdep filtering: 'dep -L cat/pkg-version' filters

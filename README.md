@@ -92,6 +92,24 @@ Claude large-language model (Anthropic) as a coding assistant; every
 change was reviewed by hand and validated against the bats unit
 suite and the smoke-harness regression net before landing.
 
+The **0.7.1** release (2026) is a fix + infrastructure point release.
+The audit pass driven by shellcheck cleanup surfaced three real
+bugs that had been silently broken: a case-shadow that left two of
+six USE-resolution tiers as dead code (`pkginternal_use_for` was
+unreachable; `env.d`'s profile.env extraction never fired), a
+`comm_ver` typo that returned `1.2_alpha1 == 1.2.0_beta2` as equal,
+and a `local foo=$(...) || return` pattern that silently swallowed
+`virtual_version` failures. Test infrastructure expanded with a
+bats smoke tier (`make check-smoke`, 41 tests against a real
+Portage tree) and per-bug-fix unit tests (200 → 231). `src/dep` is
+shellcheck-clean at both `--severity=error` and `--severity=warning`.
+Two more `comm_ver` bugs (rc-suffix mis-ordering, `1.0` vs `1.0-r0`
+aborting) surfaced during the test-pinning pass and are deferred to
+0.7.2; see `ChangeLog` for details.
+
+The 0.7.1 work used Claude (Anthropic) as a coding assistant on the
+same review-by-hand basis as 0.7.0 / 0.6.0.
+
 See `ChangeLog` for the full per-release history.
 
 ## Other known repositories
