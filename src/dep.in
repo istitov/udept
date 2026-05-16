@@ -36,6 +36,12 @@ spaces="${spaces:0:${COLUMNS:=80}}"
 EPREFIX=""
 EROOT=""
 VARDB_DIR="/var/db/pkg"
+# EDB_DIR is set as part of the path-roots scaffolding (mirrors the
+# others, updated by resolve_eroot_paths for Gentoo Prefix / chroot
+# layouts) but currently unread inside dep.in itself. Kept for
+# downstream callers and for the deferred EDB-cache integration on
+# the post-0.7.0 roadmap (native depclean).
+# shellcheck disable=SC2034
 EDB_DIR="/var/cache/edb"
 PORTAGE_LIB_DIR="/var/lib/portage"
 PORTAGE_LOG_DIR="/var/log/portage"
@@ -60,6 +66,8 @@ function resolve_eroot_paths() {
 	# defaults above are already correct — nothing to do.
 	[[ -z "$EROOT" && -z "$EPREFIX" ]] && return
 	VARDB_DIR="${EROOT}/var/db/pkg"
+	# Same scaffolding-for-future-EDB-integration as the global decl.
+	# shellcheck disable=SC2034
 	EDB_DIR="${EROOT}/var/cache/edb"
 	PORTAGE_LIB_DIR="${EROOT}/var/lib/portage"
 	PORTAGE_LOG_DIR="${EROOT}/var/log/portage"
@@ -542,6 +550,11 @@ trap 'exit 1' SIGINT
 temp_dir="$(mktemp -t -d dep.XXXXXXXX)" || exit 1
 # rm -rf and 2>/dev/null so the second trap firing (EXIT after TERM)
 # doesn't print 'cannot remove' for an already-deleted directory.
+# Double-quote (vs single) so $temp_dir is captured at trap-set time —
+# protects against any future reassignment, and the dir was just
+# created so the value is known good. SC2064 hints at single-quoting
+# for deferred expansion; here we want the snapshot semantic.
+# shellcheck disable=SC2064
 trap "rm -rf $temp_dir 2>/dev/null" EXIT TERM
 
 # A useful trick to stack e.g. USE flags
@@ -975,6 +988,9 @@ function dep_satisfies_mlsr() {
 	local t_mlsr="$1"; local vs="$2"; local d_mlsr="$3"
 	[[ "$vs" == @(<|>)* ]] && d_mlsr="${d_mlsr%\*}"  # >=foo-2* idiocy
 	if [[ "$d_mlsr" == *\* ]]; then
+		# Intentional glob match: $d_mlsr ends with '*' here (the if
+		# above gates that), so the unquoted RHS is the pattern.
+		# shellcheck disable=SC2053
 		[[ "$t_mlsr" == $d_mlsr ]] && return 0 || return 1
 	fi
 	[[ "$vs" == "" ]] && return 0
@@ -1464,7 +1480,7 @@ function comm_ver() {
 function highest_mlsr() {
 	local highest=""
 	local mlsr
-	for mlsr in $*; do
+	for mlsr in "$@"; do
 		if ! [[ "$highest" ]]; then 
 			highest=$mlsr
 			continue
@@ -1517,18 +1533,23 @@ function has_version() {
 		\>*)  vs=">"; pkgspec="${pkgspec:1}";;
 		*)    vs="";;
 	esac
+	# These globs may match multiple ebuild dirs; the [[ -d "${arr[0]}" ]]
+	# check below is "did the glob expand to at least one real dir?" — with
+	# bash's default (nullglob off), an unmatched pattern stays literal, so
+	# arr[0] is the unexpanded pattern string and fails -d. Explicit [0]
+	# index makes that intent obvious.
 	case "$vs" in
 		=) arr=( ${VARDB_DIR}/$pkgspec )
-		[[ -d "${arr}" ]] && return 0 || return 1;;
+		[[ -d "${arr[0]}" ]] && return 0 || return 1;;
 		\~) arr=( ${VARDB_DIR}/${pkgspec}?(-r+([[:digit:]])) )
-		[[ -d "${arr}" ]] && return 0 || return 1;;
+		[[ -d "${arr[0]}" ]] && return 0 || return 1;;
 		"") arr=( ${VARDB_DIR}/${pkgspec}-$VER_SHPAT )
-		[[ -d "${arr}" ]] && return 0 || return 1;;
+		[[ -d "${arr[0]}" ]] && return 0 || return 1;;
 		*)
 		cp="${pkgspec/%-$VER_SHPAT}"
 		verstring_req="${pkgspec#${cp}-}"
 		avail=( ${VARDB_DIR}/${cp}-$VER_SHPAT )
-		[[ -d "${avail}" ]] || return 1
+		[[ -d "${avail[0]}" ]] || return 1
 		[[ "${vs}" ]] || return 0
 		for inst in "${avail[@]}"; do
 			verstring_inst="${inst#${VARDB_DIR}/${cp}-}"
@@ -1589,7 +1610,7 @@ function dot_depgraph() {
 	has $do_arg_info tree-depends depends \
 		&& local reverse="" || local reverse="yes"
 	while ((${#queue[@]} > 0)); do
-		node="${queue}"; queue=("${queue[@]:1}")
+		node="${queue[0]}"; queue=("${queue[@]:1}")
 		handled[${#handled[@]}]="$node"
 		while read dep taint; do
 			[[ "$dep" ]] || continue
@@ -1764,7 +1785,7 @@ function raw_depends() {
 #		"u" ==> u in PACKAGE_USE_LIST
 #
 function crunch_depends() {
-	local my_use="$(dbuse "$1")"
+	local my_use; my_use="$(dbuse "$1")"
 	ordeps="$2" # carry through
 	local taint=""
 	while cd_evaluate_single; do :; done
@@ -1800,10 +1821,12 @@ function cd_evaluate_single() {
 			((++ornum))
 		done
 		if [[ "$ordeps" == safe ]]; then
+			# 1-element-array echo: explicit [0] makes intent clear
+			# (the elif guarantees ornum==1 / instnum==1 at this point).
 			if ((ornum == 1)); then
-				echo "$orlist"
+				echo "${orlist[0]}"
 			elif ((instnum == 1)); then
-				echo "$instlist"
+				echo "${instlist[0]}"
 			fi
 		elif [[ "$ordeps" == all ]]; then
 			for ((i=0;i<ornum;++i)); do
@@ -1926,8 +1949,10 @@ memoise world_sets_expand
 function db_grep() {
 	local needle="$1" with_tree="$2" attr="$3" tree cpv
 	if [[ "$opt_arg_original_depends" ]]; then
+		# -exec ... + is null-safe vs `| xargs` (filenames in
+		# /var/db/pkg are well-known but defensive shape anyway).
 		find ${VARDB_DIR} -name "$attr" \
-		| xargs -r grep -l "${needle}" \
+			-exec grep -l "${needle}" {} + \
 		| cut -d/ -f5-6
 	elif [[ "$opt_arg_uninstalled" ]]; then
 		for tree in $portage_trees; do
@@ -1949,7 +1974,7 @@ function db_grep() {
 		find ${VARDB_DIR} -mindepth 3 -maxdepth 3 \
 			\( -name DEPEND -o -name RDEPEND -o -name BDEPEND \
 			   -o -name IDEPEND -o -name PDEPEND \) \
-		| xargs -r grep -l "${needle}" 2>/dev/null \
+			-exec grep -l "${needle}" {} + 2>/dev/null \
 		| sed -n "s!^${VARDB_DIR}/\\([^/]*/[^/]*\\)/.*!\\1!p" \
 		| sort -u \
 		| while read cpv; do
@@ -1998,17 +2023,22 @@ function _smartdep() {
 	set_xterm_title "Reverse dependencies of: $cpv"
 	local cp="${cpv/%-$VER_SHPAT}"
 	local mlsr="${cpv#${cp}-}"
-	local installed="$(provided_mlsrs $cp)"
-	local versions="$(avail_versions $cp "" "" yes yes) $installed"
+	local installed versions
+	installed="$(provided_mlsrs $cp)"
+	versions="$(avail_versions $cp "" "" yes yes) $installed"
 	# find a depatom this satisfies but (other) installed versions 
 	# with higher priority of satisfaction do not	
 	if [[ "$asvirtual" ]]; then
-		local virtual_mlsr=$(virtual_version $cp $mlsr $asvirtual) \
-		|| return
+		# Split decl from assign so `|| return` checks virtual_version's
+		# exit, not `local`'s — the combined form makes `local` swallow
+		# the inner command's status (always returns 0).
+		local virtual_mlsr
+		virtual_mlsr=$(virtual_version $cp $mlsr $asvirtual) || return
 		local virtual_cpv=$asvirtual-$virtual_mlsr
 		# using tac and sort -u to take the highest package-mlsr
 		# for each virtual-mlsr
-		local cands="$(
+		local cands
+		cands="$(
 		echo "${installed}" | mlsr_sort | tac \
 		| while read amlsr; do
 			vmlsr="$(virtual_version $cp $amlsr $asvirtual)" \
@@ -2035,13 +2065,13 @@ function _smartdep() {
 		unset $virtual_mlsr; unset $virtual_cpv
 		cands=""
 		if [[ ! -d ${VARDB_DIR}/$cpv ]]; then for x in ${installed}; do
-			[[ $x != $mlsr ]] && ! has $x $cands \
+			[[ $x != "$mlsr" ]] && ! has $x $cands \
 				&& cands="$cands $x"
 		done; elif has $mlsr $versions; then for x in ${installed}; do
-			[[ $x != $mlsr ]] && ! has $x $cands && vercmp $x ">=" $mlsr \
+			[[ $x != "$mlsr" ]] && ! has $x $cands && vercmp $x ">=" $mlsr \
 				&& cands="$cands $x"
 		done; else for x in ${installed}; do
-			[[ $x != $mlsr ]] && ! has $x $cands \
+			[[ $x != "$mlsr" ]] && ! has $x $cands \
 				&& { vercmp $x ">=" $mlsr || has $x $versions; } \
 				&& cands="$cands $x"
 		done; fi
@@ -2520,7 +2550,7 @@ function info_action_depends() {
 	set_xterm_title "Displaying dependencies of $1"
 	local cpv="$1" excl="" x
 	for x in "${@:2}"; do 
-		expand_arg "${x#=}"; excl="$excl ${RESULT[@]}"
+		expand_arg "${x#=}"; excl="$excl ${RESULT[*]}"
 	done
 	resdepend $cpv \
 	| while read depatom taint; do
@@ -2603,7 +2633,8 @@ function redundant() {
 
 function info_action_changelog() {
 	local cpv="$1"
-	local tree="$(best_tree $cpv)" cp="${cpv%-$VER_SHPAT}"
+	local tree cp="${cpv%-$VER_SHPAT}"
+	tree="$(best_tree $cpv)"
 	local pn=${cp#*/} ver="${cpv#$cp-}" ready="" entries=0
 	echo "From ${BR}$tree/$cp/ChangeLog${NO}:"
 	while read; do
@@ -2646,7 +2677,9 @@ function use_desc() {
 function info_action_usedesc() {
 	set_xterm_title "Displaying USE flags for $1"
 	local cpv="$1"
-	local alluse="$(dbuse)" my_use=$(dbuse "$cpv") ouse=""
+	local alluse my_use ouse=""
+	alluse="$(dbuse)"
+	my_use=$(dbuse "$cpv")
 	[[ -d ${VARDB_DIR}/$cpv ]] && ouse=$(<${VARDB_DIR}/$cpv/USE) || unset ouse
 	pusemask=$(package_use_mask "$cpv")
 	for x in $(extract_var IUSE $cpv | strip_iuse_prefixes | sed 's/[[:space:]]/\n/g' | sort -u)
@@ -2840,16 +2873,20 @@ function info_action_info() {
 		(echo -n "$Bl$(pad 12 $x)$NO: "; extract_var $x $cpv) \
 		| fmt_w $COLUMNS 0 14
 	done
-	local tree="$(best_tree $cpv)"
+	local tree; tree="$(best_tree $cpv)"
 	echo "$Fc$(pad 12 ebuild)$NO: $tree/$cp/$pv.ebuild" | fmt_w $COLUMNS 0 14
 	metadata_extract $tree $cp herd
 	metadata_extract $tree $cp email
 	local cat=${cp%/*} pn=${cp#*/} p=${pv%-r+([0-9])}
 	local pr=${pv#$p-}; [[ "$pr" == "$pv" ]] && pr="r0"
-	local slot="$(slot_for "$cpv")"
+	local slot; slot="$(slot_for "$cpv")"
 	local patches=()
 	for d in $ETC_PORTAGE_DIR/patches/$cat/$pn*; do
 		dn="${d##*/}"
+		# Last clause uses unquoted RHS deliberately: $dn may be a
+		# patch-dir name with version wildcards (e.g. 'foo-1.2*'),
+		# and the intent is glob match.
+		# shellcheck disable=SC2053
 		[[ "$dn" == "$pn" || "$dn" == "$p" || "$dn" == "$p-$pr" \
 			|| "$dn" == "${pn}[$slot]" || "${pv#$pn-}" == ${dn#$pn-} ]] \
 			|| continue
@@ -2860,7 +2897,7 @@ function info_action_info() {
 		for x in "${patches[@]}"; do echo "$x"; done
 	fi | fmt_w $COLUMNS 0 14
 	if [[ -d ${VARDB_DIR}/$cpv ]]; then
-		local counter=$(extract_var_from_vardb COUNTER $cpv)
+		local counter; counter=$(extract_var_from_vardb COUNTER $cpv)
 		local logs=()
 		for ((i=counter-1;i<=counter+1;++i)); do
 			x=${PORTAGE_LOG_DIR}/$i-$pv.log
@@ -2933,10 +2970,10 @@ function info_action_keywords() {
 		mlsrs[${#mlsrs[@]}]="$mlsr"; trees[${#trees[@]}]="$tree"
 		(( ${#mlsr} > lmlsr )) && lmlsr=${#mlsr}
 	done <<<"$(mlsr_trees_sorted "$cp")"
-	local installed="$(installed_mlsrs "$cp")"
+	local installed; installed="$(installed_mlsrs "$cp")"
 		
 	local archs larch=0 arch
-	archs=( $(< $PORTDIR/profiles/arch.list) )
+	mapfile -t archs < "$PORTDIR/profiles/arch.list"
 	for arch in "${archs[@]}"; do 
 		(( ${#arch} > larch )) && larch=${#arch}
 	done
@@ -2979,7 +3016,8 @@ function info_action_keywords() {
 			has "$arch" "${keywords[@]}" && sym="$GR+$NO"
 			echo -n " $sym"
 		done
-		[[ "$inj" ]] || local slot=$(slot_for $cpv $tree)
+		local slot
+		[[ "$inj" ]] || slot=$(slot_for $cpv $tree)
 		[[ "$slot" && "$slot" != 0 ]] && echo -n " [$slot]"
 		[[ "$tree" == "$PORTDIR" ]] && echo || echo " $tree"
 	done
@@ -2988,8 +3026,8 @@ function info_action_keywords() {
 function info_action_versions() {
 	set_xterm_title "Displaying versions of $1"
 	local cp="$1"; local pn=${cp#*/}
-	local installed="$(installed_mlsrs "$cp")"
-	local tree deppath depfile mlsr
+	local installed; installed="$(installed_mlsrs "$cp")"
+	local tree mlsr
 	mlsr_trees_sorted "$cp" | while read mlsr tree; do
 		cpv=$cp-$mlsr; ebuild=$tree/$cp/$pn-$mlsr.ebuild
 		[[ "$tree" == "INJECTED" ]] && inj="yes" || inj=""
@@ -3005,7 +3043,7 @@ function info_action_versions() {
 		elif [[ -z "$inj" ]] && is_keyword_masked $cp $mlsr $tree; then 
 			M="${RD}K$NO"; COL="$RD"
 			keywords_for $cpv "$tree"
-			mask_comment="${RD}keywords: ${RESULT[@]}${NO}"
+			mask_comment="${RD}keywords: ${RESULT[*]}${NO}"
 		elif is_package_unmasked $cp $mlsr; then
 			M="${Rd}U$NO"
 		fi
@@ -3167,7 +3205,7 @@ function info_action_owners_match() {
 	# Escape characters with meaning in basic regex so a path containing
 	# e.g. '[' or '*' doesn't turn into an unintended pattern. '/' is not
 	# special in BRE — leave it alone (escaping it produces grep warnings).
-	local rx="$(printf '%s' "${path%/}" | sed 's/[][\\.*^$]/\\&/g')"
+	local rx; rx="$(printf '%s' "${path%/}" | sed 's/[][\\.*^$]/\\&/g')"
 	set_xterm_title "Finding owners of $path..."
 	if [[ "$path" == /* ]]; then
 		grep -lx "obj ${rx} [[:xdigit:]]\+ [[:digit:]]\+\
@@ -3718,10 +3756,28 @@ function profile_packages_filter() {
 }
 
 function bashrc_filter() {
+	# $list is a scalar here. Shellcheck's cross-function inference
+	# sees an array named 'list' in stacking_sort (~line 1481) and
+	# flags both the declaration (SC2178) and the redirect below
+	# (SC2128) as if they were array operations.
+	# shellcheck disable=SC2178
 	local list="$1" out="" omitted=""
 	# Supported syntax: [[ "$CATEGORY/$P" == app-foo/bar-2.1 ]] \
 	# || [[ "$CATEGORY/$PN" == sys-baz/zork ]] \
 	# && ...
+	# Note on regex single-quoting below: in modern bash (>=3.2 without
+	# compat31), single-quoted RHS of =~ still parses as regex — only
+	# the meta-chars escaped via backslash are forced literal. The
+	# quotes here group the pattern for readability. SC2076 warns based
+	# on the pre-3.2 / compat31 semantic; udept's script doesn't set
+	# that shopt, so the quoted form works.
+	# shellcheck disable=SC2076
+	#
+	# Note on `done <<<"$list"` below: $list here is the scalar local
+	# declared just above. Shellcheck's cross-function inference sees
+	# an array named 'list' in stacking_sort (~line 1481) and flags
+	# the redirect as SC2128 false-positive on the array shape.
+	# shellcheck disable=SC2128
 	while read -r; do
 		if [[ "$REPLY" =~ '^(\|\| )?\[\[ ("?)([^ ]*)\2 == ("?)([^ ]*/[^ ]*)\4 \]\] \\' ]]; then
 			local match="${BASH_REMATCH[3]}" target="${BASH_REMATCH[5]}"
@@ -3730,7 +3786,13 @@ function bashrc_filter() {
 				if (
 					mls="${mlsr%-r+([[:digit:]])}"; rev="${mlsr#$mls-}"
 					PN="${cp##*/}"; P="$PN-$mls"; PV="$mls"; PR="${rev:-r0}"
-					PVR="$mlsr"; PF="$PN-$mlsr"; CATEGORY="${t_cp%/*}"
+					# Portage env-var injection consumed by the `eval [[
+					# "$match" == "$target" ]]` below — user-supplied
+					# match patterns reference $P / $PV / $PF / $CATEGORY
+					# etc. Static analysis can't trace the eval link,
+					# hence SC2034 on the seemingly-unused names.
+					# shellcheck disable=SC2034
+					{ PVR="$mlsr"; PF="$PN-$mlsr"; CATEGORY="${t_cp%/*}"; }
 					for x in ${VARDB_DIR}/$cp-$mlsr/+([[:upper:]]); do
 						[[ -r "$x" ]] && read ${x##*/} <<<"$(<"$x")"
 					done
@@ -3818,8 +3880,18 @@ function inspect_patch_tree_check_data_is_highest_patched() {
 		mlsr_slots[$i]=$(slot_for "$cp-$mlsr" "$mlsr_tree")
 		is_package_masked "$cp" "$mlsr" && mlsr_pmask[$i]="yes"
 		mls="${mlsr%-r+([[:digit:]])}"; rev="${mlsr#$mls-}"
+		# Locals P/PN/PV/PR/PVR/PF/SLOT mirror Portage's standard
+		# ebuild env-var set. Only some are read by the pattern match
+		# below (PN, P, PR, PVR, SLOT); PV and PF stay declared for
+		# symmetry with the established convention — easier to read
+		# the whole block as "the ebuild env" than to elide names.
+		# shellcheck disable=SC2034
 		local P="$pn-$mls" PN="$pn" PV="$mls" PR="${rev:-r0}" PVR="$mlsr"
+		# shellcheck disable=SC2034
 		local PF="$pn-$mlsr" SLOT="${mlsr_slots[$i]}"
+		# Same intentional pattern match as inspect_patch_tree above —
+		# $dn may carry a version wildcard.
+		# shellcheck disable=SC2053
 		[[ "$dn" == "$PN" || "$dn" == "$P" || "$dn" == "$P-$PR" \
 			|| "$dn" == "${PN}[$SLOT]" || "$PVR" == ${dn#$PN-} ]] \
 			&& mlsr_match[$i]=$mlsr
@@ -3867,7 +3939,10 @@ function inspect_patch_tree() {
 		cdn=${patchdir#$tree/}; dn=${cdn##*/}
 		cp=${cdn%@(\[*\]|-${VER_SHPAT}?(?(.)\*))}; pn=${cp##*/}
 		patches=("$patchdir"/*)
-		if [[ ! -e "$patches" ]]; then
+		# Same glob-presence pattern: with nullglob off, unmatched glob
+		# stays literal so patches[0] fails -e and we hit the "no
+		# patches" branch.
+		if [[ ! -e "${patches[0]}" ]]; then
 			log_message 1 "$patchdir does not contain any patches"
 			echo "$rmdir_command '$patchdir'"
 		elif [[ "$cp" == "$cdn" ]]; then
@@ -4022,7 +4097,12 @@ function main() {
 	fi
 	set_xterm_title "Processing commands..."
 	case "$do_arg_action" in
-		exec ) 
+		exec )
+			# Intentional eval: --exec passes a single argv element
+			# that's a literal shell snippet, which must be re-parsed
+			# to run as a command. SC2294 hints at dropping eval to
+			# preserve array semantics, but here we WANT string re-eval.
+			# shellcheck disable=SC2294
 			time eval "${args[@]}"
 			echo $'\n'"Return value: $?; RESULT: ${RESULT[*]}" >&2;;
 		purge | depclean )

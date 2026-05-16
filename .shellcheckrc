@@ -2,22 +2,45 @@
 # https://github.com/koalaman/shellcheck/wiki/Directive
 #
 # CI enforces `shellcheck --severity=error src/dep` — so warnings
-# and below do not block builds. This file is for the developer
-# running `shellcheck src/dep` locally without the --severity flag
-# and wanting a low-noise baseline.
+# and below do not block builds. This file lowers the noise floor
+# for developers running plain `shellcheck src/dep` locally.
 #
-# Two patterns in src/dep.in are deliberately not shellcheck-clean and
-# are covered by inline `# shellcheck disable=...` directives at the
-# source site:
+# Inline `# shellcheck disable=...` directives in src/dep.in cover
+# the per-site cases (intentional patterns, false positives from
+# cross-function inference). The disables below are for systemic
+# styles the author leaned on consistently across the script —
+# mechanical "fixes" would be invasive and regress behaviour.
+
+# SC2046 — Quote this to prevent word splitting.
+# dep.in deliberately uses unquoted command substitution to feed
+# space-separated lists of atoms / file paths / tokens as separate
+# arguments to the following command, e.g.:
 #
-#   - SC2104 at handle_arg_info: `continue` propagates from a function
-#     up to the caller's enclosing argv `for` loop (POSIX-defined).
-#   - SC2151 across comm_float / comm_ver: negative-return-as-signed-
-#     magnitude via bash's mod-256 truncation (-1 -> 255). Documented
-#     at the function header; vercmp() reads `$? >= 128` as "less than".
+#   kill_comments_and_blanks $(etc_portage_files package.use)
+#   is_in_maskfile "$cp" "$mlsr" $(etc_portage_files package.unmask)
 #
-# Warning-level findings (--severity=warning surfaces ~92 across
-# SC2046, SC2206, SC2155, SC2128, etc.) are tracked for a future
-# cleanup pass. Many sit in word-splitting / IFS-split patterns the
-# original author leaned on deliberately; mechanical fixes would
-# regress behaviour. Triage TBD.
+# Quoting would collapse each list to a single argument. This is
+# the project's read-input-to-args idiom; ~27 sites.
+disable=SC2046
+
+# SC2206 — Quote to prevent word splitting/globbing on array
+# assignment from $(...) or word-split strings.
+# Same intent as SC2046, expressed as array construction:
+#
+#   s1_m=( ${s1_m//./ } )        # split version on '.'
+#   s1_ss=( ${s1_ss//_/ } )      # split status suffix on '_'
+#   ACCEPT_KEYWORDS=( $arches )  # split arches into array
+#   eclasses=(${REPLY#_eclasses_=})  # split eclass list
+#
+# ~20 sites; all are intentional whitespace-split into arrays.
+disable=SC2206
+
+# SC2229 — read into $var (where $var holds a name).
+# Two sites in get_accept_keywords use `read -a "$return"` for
+# indirect array assignment — the caller passes the name of the
+# output variable and the callee reads into that name. This is the
+# pre-`declare -n` pattern bash had before nameref support, and
+# converting it would touch every caller. Shellcheck suggests
+# `${var?}` to quote, which would just change the false-positive
+# message without addressing intent.
+disable=SC2229
