@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a new flag, option, or behaviour change
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        dep already has dozens of flags across action / info / option
+        categories — check `dep --help` and `man dep` first to make
+        sure the feature isn't already covered.
+
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: What are you trying to accomplish?  What problem does this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What do you do today?
+      description: |
+        Your current workflow, if any. If you don't have one yet
+        (new user, just discovered udept, etc.), say so. If the
+        feature feels like a small extension of an existing flag,
+        mention which one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed solution
+      description: |
+        If you have a specific flag/behaviour in mind, describe it
+        here.  Otherwise leave blank — happy to discuss approaches.
+    validations:
+      required: false

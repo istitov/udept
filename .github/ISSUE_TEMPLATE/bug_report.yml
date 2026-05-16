@@ -1,0 +1,97 @@
+name: Bug report
+description: Report something dep does wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please include the
+        exact version + environment so we can reproduce.
+
+  - type: textarea
+    id: version-env
+    attributes:
+      label: dep version + environment
+      description: |
+        Paste the output of `dep --version` plus the Gentoo
+        environment basics (bash, profile, portageq, emerge).
+        dep shells out to `portageq` and `emerge` and is sensitive
+        to changes in their output formats — a tool drift is a
+        common bug class.
+      placeholder: |
+        $ dep --version
+        dep v. 0.7.0 "Patched All The Way Down"
+        $ bash --version | head -1
+        GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu)
+        $ eselect profile show
+        Current /etc/portage/make.profile symlink: default/linux/amd64/23.0/desktop
+        $ portageq --version
+        Portage 3.0.78 (...)
+        $ emerge --version
+        Portage 3.0.78 (...)
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: command-output
+    attributes:
+      label: Command and full output
+      description: |
+        The exact command line that triggered the bug, and the full
+        terminal output. Pass `--colour=no` to make the paste readable
+        without ANSI escapes. Action flags (`-d`, `-P`, `-w`, `-E`,
+        `-O`) should be run with `--pretend` first if a real run
+        would change state you need to inspect.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: package-metadata
+    attributes:
+      label: Relevant package metadata
+      description: |
+        If the bug involves a specific package, paste the contents of
+        its vardb files. Strip anything sensitive but keep the layout —
+        parser bugs reproduce on the exact bytes.
+
+        Typical pairings:
+
+          | dispatch                 | files to attach                       |
+          |--------------------------|---------------------------------------|
+          | -l / -L / -t / -T         | `/var/db/pkg/<cpv>/{DEPEND,RDEPEND,BDEPEND,PDEPEND}` |
+          | -i / -S / -e / -k         | `/var/db/pkg/<cpv>/{DESCRIPTION,SLOT,KEYWORDS,IUSE}` |
+          | -f / -F                   | `/var/db/pkg/<cpv>/CONTENTS`         |
+          | -Q --required-use         | metadata/md5-cache/<cpv> REQUIRED_USE line + active USE |
+          | -wp / -Pp / depclean      | `/var/lib/portage/world` (+ optionally `/var/lib/portage/world_sets`) |
+          | -E filter-etc-portage     | the `/etc/portage/*` files involved  |
+          | -R / -r virtuals          | the providers under `/var/db/pkg/virtual/<name>-*` |
+    validations:
+      required: false
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: Anything else?
+      description: |
+        Unusual overlay layout, non-stock profile tree, unusual
+        SLOT layout, custom EAPI overrides — anything that isn't a
+        vanilla Gentoo install and might be relevant.
+    validations:
+      required: false

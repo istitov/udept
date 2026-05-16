@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: udept README
+    url: https://github.com/istitov/udept/blob/main/README.md
+    about: Most usage questions are answered by README.md or `man dep`.
+  - name: udept ChangeLog
+    url: https://github.com/istitov/udept/blob/main/ChangeLog
+    about: Check the recent entries — your issue may already have been fixed.

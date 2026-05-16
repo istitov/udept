@@ -2,6 +2,8 @@ SUBDIRS = src doc completion packaging
 
 EXTRA_DIST = \
 	.editorconfig \
+	.shellcheckrc \
+	CONTRIBUTING.md \
 	tests/smoke.sh \
 	tests/smoke-diff.sh \
 	tests/unit/test_helper.bash \
