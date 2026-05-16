@@ -11,7 +11,8 @@
 	  of its six tiers since the modern-era refactor.
 	  pkginternal_use_for() was completely unreachable.
 	* fix: comm_ver typo s1_s/s2_s (commit 8aa2c90). The
-	  length-difference short-circuit at line 1442 referenced
+	  length-difference short-circuit (the ${s1_l}${...}${s1_r}
+	  concat check after the main-array loop) referenced
 	  undefined variables ${s1_s} / ${s2_s} (typo for ${s1_ss} /
 	  ${s2_ss}). They expanded empty, so the comparison reduced
 	  to letter+revision only and skipped the status suffix.
@@ -66,14 +67,16 @@
 	  qatom).
 	* known bugs (deferred to 0.7.2): two more vercmp issues
 	  surfaced during the test-pinning pass — (a) rc-suffix
-	  mis-ordering: the status-code formula at lines 1465-1466
-	  produces rc=6 (highest), contradicting the function's own
-	  docstring (rc=3, between pre and release) and Portage's
-	  spec. (b) `1.0` vs `1.0-r0` aborts the script via exit 128
-	  because the empty-empty rev case falls through both `-lt`
-	  and `-gt` to the function's error-exit path. Documented in
-	  tests/unit/comm_ver.bats header; tests for both are
-	  omitted from this release to keep the suite green.
+	  mis-ordering: the status-class numeric mapping in the
+	  suffix loop produces rc=6 (highest), contradicting the
+	  function's own docstring (rc=3, between pre and release)
+	  and Portage's spec. (b) `1.0` vs `1.0-r0` aborts the script
+	  via exit 128 because the empty-empty rev case falls through
+	  both `-lt` and `-gt` to the function's error-exit path.
+	  Documented in tests/unit/comm_ver.bats header; tests for
+	  both are omitted from this release to keep the suite green.
+	  Both fixed in 0.7.2 immediately following this release;
+	  see the 0.7.2 ChangeLog entry above.
 	* AI-assisted: the 0.7.1 work, like 0.7.0 and 0.6.0, used
 	  Claude (Anthropic) as a coding assistant. Every change
 	  reviewed by hand and validated against the bats unit and
