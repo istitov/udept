@@ -221,3 +221,80 @@ setup() {
 	run vercmp "1.0" "~" "2.0"
 	[ "$status" -ne 0 ]
 }
+
+# --- Status number ordering ---------------------------------------------
+# After the suffix-class compare, comm_ver falls into a numeric compare
+# of the digit-portion of the suffix. `-lt`/`-gt` are arithmetic (not
+# lexical) so multi-digit numbers compare numerically.
+
+@test "comm_ver: 1.0_alpha1 < 1.0_alpha2" {
+	run comm_ver "1.0_alpha1" "1.0_alpha2"
+	[ "$status" -ge 128 ]
+}
+
+@test "comm_ver: 1.0_alpha10 > 1.0_alpha9 (multi-digit numeric, not lexical)" {
+	# `-lt`/`-gt` in `[[ ]]` are arithmetic, so 10 > 9 — not the
+	# lexical comparison '10' < '9' that string-compare would give.
+	run comm_ver "1.0_alpha10" "1.0_alpha9"
+	[ "$status" -eq 2 ]
+}
+
+@test "comm_ver: 1.0_alpha01 == 1.0_alpha1 (leading zero normalised)" {
+	# The `${s1sci}*(0)` pattern in the suffix-number extraction
+	# strips leading zeros, so '01' and '1' both normalise to '1'.
+	run comm_ver "1.0_alpha01" "1.0_alpha1"
+	[ "$status" -eq 0 ]
+}
+
+# --- Letter + status combinations ---------------------------------------
+# Letter ordering at the *_l boundary takes precedence over status-suffix
+# comparison: a `b` beats an `a` regardless of what follows.
+
+@test "comm_ver: 1.2a_beta < 1.2b_alpha (letter dominates status)" {
+	# Pre-letter compare returns first (difference class 4) so the
+	# status_class-3 path doesn't fire. Catches regressions where
+	# the loop ordering inverted.
+	run comm_ver "1.2a_beta" "1.2b_alpha"
+	[ "$status" -ge 128 ]
+}
+
+@test "comm_ver: 1.2a == 1.2a (letter-only, equal)" {
+	run comm_ver "1.2a" "1.2a"
+	[ "$status" -eq 0 ]
+}
+
+# --- cvs. prefix --------------------------------------------------------
+# The legacy `cvs.<digits>` snapshot version syntax. comm_ver's mml split
+# treats "cvs" as a leading component; bash arithmetic compares it as 0,
+# so two cvs.* versions still compare by their numeric tail.
+
+@test "comm_ver: cvs.1.0 < cvs.1.1 (cvs-prefix snapshot ordering)" {
+	run comm_ver "cvs.1.0" "cvs.1.1"
+	[ "$status" -ge 128 ]
+}
+
+# --- Unknown status suffix ----------------------------------------------
+# After the d721e8e + 0.7.2 minor-findings pass, the suffix-class case
+# statement triggers format_error + return 128 on an unknown suffix
+# (vs the previous silent scn=99 which sorted everything-above-p).
+# In practice the suffix parser at line ~1418 only accepts the known
+# set, so this path is only reachable if someone extends the parser
+# without updating the case statement. We pin the contract anyway.
+#
+# Constructing an unknown suffix requires bypassing the parser's strip
+# step. The parser pattern is
+#   *(_@(alpha|beta|pre|rc|p)*([[:digit:]]))
+# — so an unknown suffix like '_foo' won't be stripped, won't end up
+# in s1_ss, won't reach the case. We can't easily trigger the case-
+# '*)' branch from a normal vercmp call; the explicit-error contract
+# is documented at the source site instead. No bats test pin for this
+# branch — the defense lives in the comment + format_error message.
+
+# --- Format/edge sanity -------------------------------------------------
+
+@test "comm_ver: 1.0_pre vs 1.0_pre1 (suffix-number diff against bare suffix)" {
+	# Bare _pre means scn-number = 0 (after the `${s1sci}*(0)` strip);
+	# _pre1 means scn-number = 1. So _pre < _pre1.
+	run comm_ver "1.0_pre" "1.0_pre1"
+	[ "$status" -ge 128 ]
+}

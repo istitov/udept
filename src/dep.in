@@ -1468,6 +1468,13 @@ function comm_ver() {
 		# remap-if-ge-4) that placed rc=6 above release — wrong.
 		# Explicit case statement is unambiguous and matches both
 		# the docstring and the Portage Manager Specification.
+		#
+		# `*)` shouldn't fire in normal use: the suffix parser at
+		# line ~1418 only strips _alpha|beta|pre|rc|p (so an unknown
+		# suffix doesn't end up in s1_ss/s2_ss).  But if someone
+		# extends the parser without updating this case statement,
+		# the catch-all surfaces the bug instead of silently sorting
+		# the new suffix wrong.
 		case "$s1sci" in
 			alpha) s1_scn=0;;
 			beta)  s1_scn=1;;
@@ -1475,7 +1482,8 @@ function comm_ver() {
 			rc)    s1_scn=3;;
 			"")    s1_scn=4;;
 			p)     s1_scn=5;;
-			*)     s1_scn=99;;  # unknown suffix; should not occur
+			*) format_error <<<"comm_ver: unknown status suffix '$s1sci' in '$1'" >&2
+			   return 128;;
 		esac
 		case "$s2sci" in
 			alpha) s2_scn=0;;
@@ -1484,7 +1492,8 @@ function comm_ver() {
 			rc)    s2_scn=3;;
 			"")    s2_scn=4;;
 			p)     s2_scn=5;;
-			*)     s2_scn=99;;
+			*) format_error <<<"comm_ver: unknown status suffix '$s2sci' in '$2'" >&2
+			   return 128;;
 		esac
 		[[ "$s1_scn" -lt "$s2_scn" ]] && return -- -3
 		[[ "$s1_scn" -gt "$s2_scn" ]] && return 3
