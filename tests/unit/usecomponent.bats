@@ -21,6 +21,12 @@
 
 load 'test_helper'
 
+# `run --separate-stderr` (used in the env.d missing-file test below)
+# requires bats >= 1.5; declaring the minimum quietly suppresses the
+# BW02 warning and ensures the harness fails loudly on older bats
+# instead of silently producing wrong assertions.
+bats_require_minimum_version 1.5.0
+
 setup() {
 	load_dep
 	# Per-test ETC_PORTAGE_DIR fixture: env.d case reads
@@ -123,16 +129,15 @@ EOF
 @test "usecomponent env.d: missing profile.env → non-zero exit, no USE output" {
 	rm -f "$ETC_PORTAGE_DIR/profile.env"
 	# sed writes a "can't read ..." error to stderr and exits 2.
-	# bats's `run` merges stderr into $output by default, so we
-	# can't assert "$output is empty" — instead pin: status is
-	# non-zero AND no actual USE-flag-shaped output is emitted
-	# (the caller dbuse pipes this through stacking_sort which
-	# filters non-flag lines, so the sed error is harmless).
-	run usecomponent env.d ''
+	# `run --separate-stderr` (bats >=1.5) splits stderr into its
+	# own $stderr capture so we can cleanly assert that stdout is
+	# empty — the contract dbuse / stacking_sort actually relies
+	# on. Without --separate-stderr, the sed message would be
+	# merged into $output and we'd need a brittle wording-coupled
+	# assertion.
+	run --separate-stderr usecomponent env.d ''
 	[ "$status" -ne 0 ]
-	# No '+flag', '-flag', or bare-token rows in the output.
-	[[ "$output" != *$'\n'[a-zA-Z+\-]* ]] && [[ "$output" != [a-zA-Z+\-]* ]] \
-		|| [[ "$output" == sed:* ]]
+	[[ -z "$output" ]]
 }
 
 @test "usecomponent env.d: profile.env without 'export USE=' line → empty" {
