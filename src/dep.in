@@ -1331,9 +1331,14 @@ function usecomponent() {
 		pkgprofile);;
 		auto) autouse;;
 		defaults);;
-		pkginternal);;
-		env.d);;
-		repo);;
+		# pkginternal and env.d had empty placeholder cases above the
+		# real handlers — the placeholders shadowed the implementations
+		# (bash case takes the first match), so pkginternal_use_for and
+		# the profile.env sed were dead code. USE_ORDER defaults to
+		# 'env:pkg:conf:defaults:pkginternal:env.d' (line below in
+		# dbuse), so this affected USE resolution for every package
+		# whose IUSE defaults (pkginternal) or profile.env exports
+		# (env.d) contributed flags. Fixed by removing the placeholders.
 		pkginternal) [[ "$cpv" ]] && pkginternal_use_for "$cpv";;
 		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' "$ETC_PORTAGE_DIR/profile.env";;
 		features|repo);;  # TODO phase 4: implement FEATURES-forced and per-repo USE
