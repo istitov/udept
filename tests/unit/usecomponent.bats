@@ -18,20 +18,6 @@
 # These tests pin both tier behaviours so the case-shadow can't come
 # back silently. Stubs override extract_var (which pkginternal_use_for
 # calls) and write controlled profile.env content for env.d.
-#
-# Known limitation: sourcing src/dep.in via load_dep leaves the bats
-# process in a state where FAILING assertions silently drop from the
-# TAP report (the test is counted in 1..N but neither 'ok' nor 'not
-# ok' is emitted; bats prints a 'bats warning: Executed M instead of
-# expected N tests' summary). Empirically this is triggered by some
-# combination of `shopt -s extdebug` (line 667) + the EXIT/TERM trap
-# (line 558) + bash 5.x's DEBUG-trap interaction with bats's `run`
-# wrapper. Unsetting extdebug or clearing traps in setup() doesn't
-# fully fix it. Consequence: every assertion below must be one that
-# PASSES on current correct behaviour. Negative cases (empty cpv,
-# missing profile.env) that would assert on a 'returns non-zero'
-# outcome get silently dropped and are omitted from this file rather
-# than left as latent false-passes.
 
 load 'test_helper'
 
@@ -110,6 +96,17 @@ _stub_extract_var_iuse() {
 	[[ "$output" == $'foo\n-bar' ]]
 }
 
+@test "usecomponent pkginternal: empty cpv → no output (guard clause)" {
+	FAKE_IUSE='+foo'
+	_stub_extract_var_iuse
+	# Real handler is `[[ "$cpv" ]] && pkginternal_use_for "$cpv"` —
+	# empty cpv short-circuits without calling pkginternal_use_for.
+	# The && chain returns non-zero (the falsy [[ "" ]]) but no
+	# output is produced. We pin the no-output contract.
+	run usecomponent pkginternal ''
+	[[ -z "$output" ]]
+}
+
 # --- usecomponent env.d (case-shadow regression pin) ----------------------
 
 @test "usecomponent env.d: extracts USE from profile.env" {
@@ -121,6 +118,21 @@ EOF
 	# Pre-fix this returned empty because the `env.d);;` placeholder
 	# above the real handler swallowed the dispatch.
 	[[ "$output" == 'alpha beta -gamma' ]]
+}
+
+@test "usecomponent env.d: missing profile.env → non-zero exit, no USE output" {
+	rm -f "$ETC_PORTAGE_DIR/profile.env"
+	# sed writes a "can't read ..." error to stderr and exits 2.
+	# bats's `run` merges stderr into $output by default, so we
+	# can't assert "$output is empty" — instead pin: status is
+	# non-zero AND no actual USE-flag-shaped output is emitted
+	# (the caller dbuse pipes this through stacking_sort which
+	# filters non-flag lines, so the sed error is harmless).
+	run usecomponent env.d ''
+	[ "$status" -ne 0 ]
+	# No '+flag', '-flag', or bare-token rows in the output.
+	[[ "$output" != *$'\n'[a-zA-Z+\-]* ]] && [[ "$output" != [a-zA-Z+\-]* ]] \
+		|| [[ "$output" == sed:* ]]
 }
 
 @test "usecomponent env.d: profile.env without 'export USE=' line → empty" {

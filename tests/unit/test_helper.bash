@@ -41,15 +41,39 @@ load "$(_udept_find_bats_helper bats-assert)"
 # breaks and tests using fixtures will need to clear $temp_dir/<fn>/
 # explicitly in setup().
 load_dep() {
+	# Save bats's traps before sourcing — dep.in installs its own
+	# EXIT/TERM traps for tempdir cleanup (line ~558) which would
+	# replace bats's EXIT trap (`bats_exit_trap`) used for result
+	# reporting, and dep.in's top-level execution fires the bats
+	# ERR trap (`bats_error_trap`) because of patterns like
+	# `((counter++))` that return non-zero on the pre-increment.
+	# Without these snapshots restored after the source, failing
+	# bats assertions silently drop from the TAP report — the test
+	# is counted but neither `ok` nor `not ok` is emitted (bats
+	# prints `Executed M instead of expected N tests` and exits 1,
+	# which catches the regression in CI but obscures WHICH test
+	# failed).
+	local _bats_exit_trap _bats_term_trap _bats_err_trap
+	_bats_exit_trap=$(trap -p EXIT)
+	_bats_term_trap=$(trap -p TERM)
+	_bats_err_trap=$(trap -p ERR)
 	set --
 	# bats runs with set -e; dep.in uses '((counter++))' patterns that
 	# return non-zero when the pre-increment value is 0, which would
-	# abort sourcing under errexit. Disable around the source.
+	# abort sourcing under errexit. Disable around the source. Also
+	# clear ERR so the source's non-zero lines don't trip bats's
+	# ERR-trap test-fail handler before we restore it.
 	local was_errexit=
 	[[ $- == *e* ]] && was_errexit=1
 	set +e
+	trap - ERR
 	# shellcheck source=../../src/dep.in
 	source "${BATS_TEST_DIRNAME}/../../src/dep.in"
 	[[ $was_errexit ]] && set -e
+	# Drop dep.in's EXIT/TERM, restore bats's EXIT/TERM/ERR.
+	trap - EXIT TERM
+	eval "$_bats_exit_trap"
+	eval "$_bats_term_trap"
+	eval "$_bats_err_trap"
 	return 0
 }
