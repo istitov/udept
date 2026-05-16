@@ -21,21 +21,19 @@
 #   6: differ in mmm
 #   7: differ in mmm float component
 #
-# Known bugs surfaced while writing these tests (not yet fixed; tests
-# that would exercise them are deliberately omitted from this file so
-# the suite stays green — they'll be added back alongside the fix
-# commit):
+# Two bugs surfaced and were fixed in the 0.7.2 follow-up:
 #
-#   * rc-suffix mis-ordered: the status-code formula at lines 1465-1466
-#     produces alpha=1, beta=2, pre=3, release=4, p=5, rc=6 — rc is
-#     ordered HIGHER than release, contradicting the function's own
-#     docstring (alpha=0, beta=1, pre=2, rc=3, release=4, p=5) and
-#     Portage's spec. `1.0_rc` compares HIGHER than `1.0`.
-#   * `1.0` vs `1.0-r0` aborts: r0 is stripped from both sides, leaving
-#     s1_r="" / s2_r="". The fall-through revision check at lines
-#     1474-1475 fails both `-lt` and `-gt` on empty operands, so the
-#     function reaches `echo "Error!" / exit 128`, which halts the
-#     entire script (exit, not return).
+#   * rc-suffix mis-ordered: the status-code formula at the suffix
+#     loop used to produce alpha=1, beta=2, pre=3, release=4, p=5,
+#     rc=6 — rc was ordered HIGHER than release, contradicting both
+#     the function's docstring (alpha=0..p=5 with rc=3) and Portage's
+#     spec. Replaced with an explicit case statement.
+#   * `1.0` vs `1.0-r0` aborted: r0 is stripped from both sides,
+#     leaving s1_r="" / s2_r="". The fall-through revision check
+#     failed both `-lt` and `-gt` on empty operands, so the function
+#     reached its `exit 128` error path and halted the entire script.
+#     Fixed by an explicit equality check before the inequality
+#     comparisons.
 
 load 'test_helper'
 
@@ -131,12 +129,50 @@ setup() {
 	[ "$status" -ge 128 ]
 }
 
+@test "comm_ver: 1.0_pre < 1.0_rc (rc above pre)" {
+	# Regression pin for the rc-suffix fix: pre-fix rc was placed
+	# at scn=6 (above release), so this comparison was inconsistent.
+	run comm_ver "1.0_pre" "1.0_rc"
+	[ "$status" -ge 128 ]
+}
+
+@test "comm_ver: 1.0_rc < 1.0 (release > rc, per Portage spec)" {
+	# Regression pin for the rc-suffix fix: pre-fix this returned
+	# 6 (rc > release) and downstream vercmp evaluated the wrong
+	# answer.  Post-fix rc=3, release=4, so rc < release returns
+	# signed -3 -> 253.
+	run comm_ver "1.0_rc" "1.0"
+	[ "$status" -ge 128 ]
+}
+
+@test "comm_ver: 1.0_rc < 1.0_p (p higher than rc)" {
+	run comm_ver "1.0_rc" "1.0_p"
+	[ "$status" -ge 128 ]
+}
+
 @test "comm_ver: 1.0 < 1.0_p1 (patch > release)" {
 	run comm_ver "1.0" "1.0_p1"
 	[ "$status" -ge 128 ]
 }
 
 # --- Revision ordering ---------------------------------------------------
+
+@test "comm_ver: 1.0 == 1.0-r0 (r0 is the default; normalised away)" {
+	# Regression pin for the r0-abort fix: pre-fix the function
+	# stripped r0 from both sides (leaving s1_r="" / s2_r="") and
+	# fell through both `-lt` and `-gt` (both fail on empty
+	# operands), reaching `exit 128` — which halted the entire
+	# script (exit, not return). Post-fix an explicit equality
+	# check before the inequality comparisons catches this case
+	# and returns 0.
+	run comm_ver "1.0" "1.0-r0"
+	[ "$status" -eq 0 ]
+}
+
+@test "comm_ver: 1.0-r0 == 1.0 (commutativity of the r0 normalisation)" {
+	run comm_ver "1.0-r0" "1.0"
+	[ "$status" -eq 0 ]
+}
 
 @test "comm_ver: 1.0-r1 > 1.0 (any rev > no rev)" {
 	run comm_ver "1.0-r1" "1.0"

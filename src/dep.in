@@ -1462,8 +1462,30 @@ function comm_ver() {
 	for ((i=0; i<${#s1_ss[@]} || i<${#s2_ss[@]}; ++i)); do
 		s1si="${s1_ss[$i]}"; s2si="${s2_ss[$i]}"
 		s1sci="${s1si/%*([[:digit:]])}"; s2sci="${s2si/%*([[:digit:]])}"
-		s1_scn="$((6-${#s1sci}))"; [[ $s1_scn -ge 4 ]] && s1_scn=$((10-$s1_scn))
-		s2_scn="$((6-${#s2sci}))"; [[ $s2_scn -ge 4 ]] && s2_scn=$((10-$s2_scn))
+		# Status-class ordering per the function header and Portage
+		# spec: alpha < beta < pre < rc < release < p.  Earlier
+		# revisions used a length-based formula (6-len, then
+		# remap-if-ge-4) that placed rc=6 above release — wrong.
+		# Explicit case statement is unambiguous and matches both
+		# the docstring and the Portage Manager Specification.
+		case "$s1sci" in
+			alpha) s1_scn=0;;
+			beta)  s1_scn=1;;
+			pre)   s1_scn=2;;
+			rc)    s1_scn=3;;
+			"")    s1_scn=4;;
+			p)     s1_scn=5;;
+			*)     s1_scn=99;;  # unknown suffix; should not occur
+		esac
+		case "$s2sci" in
+			alpha) s2_scn=0;;
+			beta)  s2_scn=1;;
+			pre)   s2_scn=2;;
+			rc)    s2_scn=3;;
+			"")    s2_scn=4;;
+			p)     s2_scn=5;;
+			*)     s2_scn=99;;
+		esac
 		[[ "$s1_scn" -lt "$s2_scn" ]] && return -- -3
 		[[ "$s1_scn" -gt "$s2_scn" ]] && return 3
 		s1_sn="${s1si##${s1sci}*(0)}"
@@ -1471,6 +1493,14 @@ function comm_ver() {
 		[[ "$s1_sn" -lt "$s2_sn" ]] && return -- -2
 		[[ "$s1_sn" -gt "$s2_sn" ]] && return 2
 	done
+	# Equality check before the inequality comparisons: handles the
+	# case where two raw-different inputs normalise to identical r
+	# (the common case is `1.0` vs `1.0-r0` — different strings but
+	# both have s1_r="" after the leading -r*(0) strip).  Pre-fix
+	# this hit the -lt/-gt pair below — both empty operands fail
+	# both comparisons, the function fell through to `exit 128`,
+	# and the entire script aborted.
+	[[ "${s1_r}" == "${s2_r}" ]] && return 0
 	[[ "${s1_r}" -lt "${s2_r}" ]] && return -- -1
 	[[ "${s1_r}" -gt "${s2_r}" ]] && return 1
 	echo "Error! comm_ver failed $1 $2" >&2
