@@ -156,6 +156,53 @@ jobs:
           bash -n completion/dep
           zsh -n completion/_dep
 
+      # Functional check: load + invoke each completion once, verify
+      # it produces a non-empty option-table view. Catches the class
+      # of bug where the build produces a syntactically-valid file
+      # whose first invocation returns no candidates — e.g. when the
+      # option-table arrays land AFTER the `_dep "$@"` entry-point
+      # call (zsh autoload runs file body == function body, so order
+      # matters). Found and fixed during the post-0.7.2 verification
+      # pass; this step ensures it can't quietly regress.
+      - name: functional-check completion first-invocation
+        run: |
+          # zsh: autoload, invoke once, assert option-table count > 0.
+          # Use exec env so failure exits this step.
+          zsh -f -c '
+            fpath=("$PWD/completion" $fpath)
+            autoload -Uz _dep
+            _dep dummy 2>/dev/null
+            : ${__dep_count:=0}
+            if (( __dep_count > 0 )); then
+              print "zsh completion: __dep_count=$__dep_count (ok)"
+            else
+              print "zsh completion: FAIL — option-table arrays empty after first invocation"
+              print "  symptom: first TAB-press in a fresh shell returns no candidates"
+              print "  likely cause: \`_dep \"\$@\"\` invocation precedes the typeset -ga"
+              print "  array declarations in completion/_dep; check build rule in"
+              print "  completion/Makefile.am"
+              exit 1
+            fi
+          '
+
+          # bash: source, simulate TAB on `dep --`, assert COMPREPLY > 0.
+          bash -c '
+            source completion/dep
+            COMP_WORDS=(dep "--")
+            COMP_CWORD=1
+            COMP_LINE="dep --"
+            COMP_POINT=6
+            _dep_completion
+            n=${#COMPREPLY[@]}
+            if (( n > 0 )); then
+              echo "bash completion: COMPREPLY size=$n (ok)"
+            else
+              echo "bash completion: FAIL — empty COMPREPLY after _dep_completion"
+              echo "  symptom: TAB on \`dep --\` offers no candidates"
+              exit 1
+            fi
+          '
+
       - name: bats unit suite
         run: make check
 
