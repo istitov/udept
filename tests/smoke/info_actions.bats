@@ -87,20 +87,23 @@ setup() {
 	[[ "$output" == */* ]]
 }
 
-@test "smoke: -L --for-emerge --full-atoms portage emits =cpv lines" {
+@test "smoke: -L --for-emerge --full-atoms portage exits 0; rows start with '='" {
 	require_target PN_PORTAGE
 	run timeout "$DEP_TIMEOUT" "$DEP_BIN" --colour=no -L --for-emerge --full-atoms "$PN_PORTAGE"
 	assert_success
 	# --for-emerge output is a flat list of '=cat/pkg-version' atoms,
 	# possibly suffixed with :slot::repo by --full-atoms. Catches the
-	# format_atom_for_emerge regression class. portage is in @system on
-	# every Gentoo host and has reverse dependencies (gentoo-functions,
-	# eselect, etc.), so a regression that suppresses all output would
-	# surface as empty here. Tighter than the older "if non-empty" gate.
-	[[ -n "$output" ]]
-	# First row must start with '=' (full-atom prefix). Asserts the
-	# format, not the specific package.
-	[[ "$output" == =* ]]
+	# format_atom_for_emerge regression class.
+	#
+	# Stage3 / minimal-container hosts have no installed consumers of
+	# portage (it IS the package manager; nothing has been emerged on
+	# top of @system), so output may be legitimately empty. Pin the
+	# format anchor only when output IS produced — keeps the test
+	# stage3-tolerant while still catching a regression that emits
+	# rows with the wrong prefix on a populated maintainer system.
+	if [[ -n "$output" ]]; then
+		[[ "$output" == =* ]]
+	fi
 }
 
 # --- -t / -T tree-walk ----------------------------------------------------
@@ -222,14 +225,18 @@ setup() {
 	assert_output --partial 'build'
 }
 
-@test "smoke: -U iuse/python lists at least one cat/pkg consumer" {
+@test "smoke: -U iuse/python exits 0; rows are cat/pkg shape if any" {
 	run timeout "$DEP_TIMEOUT" "$DEP_BIN" --colour=no -U python
 	assert_success
 	# Output is a list of packages that respect (have in their IUSE)
-	# the named USE flag. python is a universal flag on Gentoo; at
-	# least one consumer always exists. '/' validates the cat/pkg row
-	# shape rather than just non-emptiness.
-	[[ "$output" == */* ]]
+	# the named USE flag. On a populated maintainer system, python is
+	# universally referenced and the list is non-empty. On stage3 /
+	# minimal containers the @system package set has no installed
+	# python-USE consumers, so output may be legitimately empty.
+	# Pin the cat/pkg row shape only when output IS produced.
+	if [[ -n "$output" ]]; then
+		[[ "$output" == */* ]]
+	fi
 }
 
 @test "smoke: -z size/portage emits a 'files:' size summary" {
