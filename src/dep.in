@@ -1431,7 +1431,15 @@ function comm_ver() {
 			((s1mi > s2mi)) && return 6
 		fi
 	done
-	((${#s1_m[@]}!=${#s2_m[@]})) && [[ "${s1_l}${s1_s}${s1_r}" == "${s2_l}${s2_s}${s2_r}" ]] && return 0
+	# Bug fix: was `${s1_s}` / `${s2_s}` (undefined), should be the
+	# status-suffix vars `${s1_ss}` / `${s2_ss}` defined above. With
+	# the undefined vars expanding empty, version pairs like
+	# `1.2_alpha1` vs `1.2.0_beta2` would erroneously return equal
+	# (different main-array lengths trigger this branch; the empty
+	# concat then matches, returning 0). With s1_ss/s2_ss present,
+	# only versions with truly equal letter+status+revision short-
+	# circuit to equal here.
+	((${#s1_m[@]}!=${#s2_m[@]})) && [[ "${s1_l}${s1_ss}${s1_r}" == "${s2_l}${s2_ss}${s2_r}" ]] && return 0
 	[[ "$s1_l" < "$s2_l" ]] && return -- -4
 	[[ "$s1_l" > "$s2_l" ]] && return 4
 	s1_ss=( ${s1_ss//_/ } ); s2_ss=( ${s2_ss//_/ } )
