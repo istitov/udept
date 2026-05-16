@@ -1,0 +1,56 @@
+# https://editorconfig.org — keep editors honest about whitespace.
+#
+# udept uses tabs for shell / make / ebuild / bats / ChangeLog (the
+# usual GNU / Gentoo conventions), 4 spaces for autoconf macros, 2
+# spaces for YAML.
+
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# Shell sources, bash-completion script, bats test files, autotools
+# .in templates that contain bash.
+[*.{sh,bash,bats,in}]
+indent_style = tab
+indent_size = 4
+
+# Gentoo ebuilds — devmanual mandates tabs.
+[*.ebuild]
+indent_style = tab
+indent_size = 4
+
+# Makefile.am, Makefile.in, generated Makefile — make requires recipe
+# lines to be tab-indented.
+[{Makefile,Makefile.*,GNUmakefile}]
+indent_style = tab
+indent_size = 4
+
+# Autoconf convention: 4-space indent inside AC_* / AM_* / AS_* macros.
+[*.ac]
+indent_style = space
+indent_size = 4
+
+# GNU ChangeLog convention: tab-indented entries, hard 2-space inside.
+[ChangeLog]
+indent_style = tab
+indent_size = 4
+
+# YAML is whitespace-sensitive; 2-space is the de facto standard.
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Plain-text doc files — preserve their existing layout.
+[{AUTHORS,COPYING,INSTALL,NEWS,README*}]
+trim_trailing_whitespace = false
+indent_style = unset
+indent_size = unset
+
+# Markdown allows trailing two-space sequences as hard line breaks;
+# don't strip them.
+[*.md]
+trim_trailing_whitespace = false

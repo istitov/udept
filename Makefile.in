@@ -282,6 +282,7 @@ top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 SUBDIRS = src doc completion packaging
 EXTRA_DIST = \
+	.editorconfig \
 	tests/smoke.sh \
 	tests/smoke-diff.sh \
 	tests/unit/test_helper.bash \
@@ -296,7 +297,15 @@ EXTRA_DIST = \
 	tests/unit/required_use_action.bats \
 	tests/unit/resolve_depatom.bats \
 	tests/unit/slot_satisfies.bats \
-	tests/unit/smoke_diff.bats
+	tests/unit/smoke_diff.bats \
+	tests/smoke/test_helper.bash \
+	tests/smoke/help.bats \
+	tests/smoke/info_actions.bats \
+	tests/smoke/virtuals.bats \
+	tests/smoke/existence.bats \
+	tests/smoke/output_modes.bats \
+	tests/smoke/errors.bats \
+	tests/smoke/actions.bats
 
 
 # 'make check' runs the bats unit-test suite. Override BATS to point at
@@ -779,6 +788,28 @@ check-local:
 	  exit 1; \
 	}
 	$(BATS) $(srcdir)/tests/unit/
+
+# 'make check-smoke' runs the bats smoke tier against the BUILT src/dep
+# on the host's real Portage tree. Requires src/dep to be built (run
+# ./configure && make first), bats installed, and the host to have a
+# populated /var/db/pkg. Each smoke test skips itself rather than
+# failing the suite when a per-test prerequisite (e.g. virtual/editor)
+# isn't installed — fresh stage3 containers in CI work fine.
+#
+# Unlike `make check` (which sources dep.in with stubs in-process),
+# this tier validates that the binary actually starts, parses its argv,
+# and consumes real eix / qatom / /var/db/pkg output without crashing.
+.PHONY: check-smoke
+check-smoke:
+	@command -v $(BATS) >/dev/null || { \
+	  echo "error: $(BATS) not on PATH; install dev-util/bats" >&2; \
+	  exit 1; \
+	}
+	@test -x $(top_builddir)/src/dep || { \
+	  echo "error: src/dep not built; run ./configure && make first" >&2; \
+	  exit 1; \
+	}
+	$(BATS) $(srcdir)/tests/smoke/
 
 # Smoke-test targets. The smoke harness exercises a fixed battery of `dep`
 # invocations against the live Portage tree and emits a stable, diffable
