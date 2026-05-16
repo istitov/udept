@@ -153,6 +153,13 @@ cat $(profile_files_extra use.desc 2>/dev/null) $(profile_files_extra use.local.
 	_describe -t use_flags 'USE flag' uses
 }
 
-_dep "$@"
-
 # --- Build-appended option-table dump below this line ---------------
+# The completion/Makefile.am rule appends the option-table arrays
+# (typeset -ga __dep_*) below this marker, then appends the
+# `_dep "$@"` invocation as the very last line.  Order matters:
+# zsh's non-KSH autoload makes the file body = function body, so on
+# the first TAB-trigger the arrays must be declared BEFORE _dep
+# runs and reads them.  Pre-fix this file ended with `_dep "$@"`
+# followed by the dump; the first invocation saw empty arrays and
+# produced no candidates (the second invocation onward worked
+# because the arrays were declared during the first run's tail).

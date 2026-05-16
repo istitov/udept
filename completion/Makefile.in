@@ -485,9 +485,16 @@ uninstall-am: uninstall-nodist_bashcompletionDATA \
 @BASH_COMPLETION_TRUE@dep: $(srcdir)/dep.completion.in $(top_builddir)/src/dep
 @BASH_COMPLETION_TRUE@	cat $(srcdir)/dep.completion.in > dep
 @BASH_COMPLETION_TRUE@	bash $(top_builddir)/src/dep --exec 'for n in count short long type itype; do declare -p shopt_$$n; done' | sed 's/shopt_/_dep_completion_shopt_/' >> dep
+# NB: the final 'printf' line appends `_dep "$@"` AFTER the option-
+# table dump above. zsh's non-KSH autoload makes the file body ==
+# function body; on the first TAB-trigger the body runs in order,
+# so the invocation must come after the `typeset -ga` arrays it
+# reads.  Pre-fix the invocation lived inside dep.zsh.in BEFORE the
+# dump and the first invocation saw empty arrays.
 @ZSH_COMPLETION_TRUE@_dep: $(srcdir)/dep.zsh.in $(top_builddir)/src/dep $(srcdir)/dump-zsh-options.sh
 @ZSH_COMPLETION_TRUE@	cat $(srcdir)/dep.zsh.in > _dep
 @ZSH_COMPLETION_TRUE@	bash $(srcdir)/dump-zsh-options.sh $(top_builddir)/src/dep 2>/dev/null >> _dep
+@ZSH_COMPLETION_TRUE@	printf '\n%s\n' '_dep "$$@"' >> _dep
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

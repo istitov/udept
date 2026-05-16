@@ -21,8 +21,15 @@ endif
 if ZSH_COMPLETION
 nodist_zshcompletion_DATA = _dep
 zshcompletiondir = $(datadir)/zsh/site-functions
+# NB: the final 'printf' line appends `_dep "$@"` AFTER the option-
+# table dump above. zsh's non-KSH autoload makes the file body ==
+# function body; on the first TAB-trigger the body runs in order,
+# so the invocation must come after the `typeset -ga` arrays it
+# reads.  Pre-fix the invocation lived inside dep.zsh.in BEFORE the
+# dump and the first invocation saw empty arrays.
 _dep: $(srcdir)/dep.zsh.in $(top_builddir)/src/dep $(srcdir)/dump-zsh-options.sh
 	cat $(srcdir)/dep.zsh.in > _dep
 	bash $(srcdir)/dump-zsh-options.sh $(top_builddir)/src/dep 2>/dev/null >> _dep
+	printf '\n%s\n' '_dep "$$@"' >> _dep
 endif
 
