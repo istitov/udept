@@ -300,6 +300,8 @@ EXTRA_DIST = \
 	tests/unit/resolve_depatom.bats \
 	tests/unit/slot_satisfies.bats \
 	tests/unit/smoke_diff.bats \
+	tests/unit/comm_ver.bats \
+	tests/unit/usecomponent.bats \
 	tests/smoke/test_helper.bash \
 	tests/smoke/help.bats \
 	tests/smoke/info_actions.bats \
