@@ -110,6 +110,14 @@ aborting) surfaced during the test-pinning pass and are deferred to
 The 0.7.1 work used Claude (Anthropic) as a coding assistant on the
 same review-by-hand basis as 0.7.0 / 0.6.0.
 
+The **0.7.2** release (2026) fixes the two `comm_ver` bugs deferred
+from 0.7.1: rc-suffix releases are now correctly ordered between
+`_pre` and the release proper (the length-based status-class formula
+was replaced with an explicit case statement), and `1.0` vs `1.0-r0`
+no longer aborts the script (an equality check now handles the
+case where both revisions normalise to empty). 236 unit tests
+(5 new) pin both fixes. AI-assist disclosure as for 0.7.1.
+
 See `ChangeLog` for the full per-release history.
 
 ## Other known repositories

@@ -1,3 +1,77 @@
+0.7.2 "The Linter Was Right" (20260516)
+
+	* fix: comm_ver rc-suffix mis-ordering (commit d721e8e). The
+	  status-class numeric mapping used a length-based formula
+	  that placed rc at scn=6 (highest), contradicting both the
+	  function's own header docstring (rc=3, between pre and
+	  release) and Portage's `alpha < beta < pre < rc < release
+	  < p` specification. Effect: every vercmp comparison
+	  involving an rc release returned the wrong answer —
+	  `1.0_rc < 1.0` was FALSE in vercmp; downstream dep_satisfies,
+	  slot resolution, and the dep walker would mis-rank rc
+	  releases. Replaced with an explicit case statement that
+	  matches the docstring and spec.
+	* fix: comm_ver `1.0` vs `1.0-r0` aborted via exit 128 (also
+	  in d721e8e). r0 is the implicit-default revision; the
+	  /#-r*(0) parameter expansion normalises both `1.0` and
+	  `1.0-r0` to empty s_r. At the function's final revision
+	  compare, both -lt and -gt fail on empty operands (bash
+	  treats "" as 0 in arithmetic context), so the function
+	  reached its `Error! ... exit 128` fall-through and halted
+	  the entire script. Fixed with an explicit equality check
+	  before the inequality compares.
+	* tests: +5 unit tests in tests/unit/comm_ver.bats covering
+	  all four rc-ordering boundaries (pre < rc, rc < release,
+	  rc < p, 1.0_rc literal) plus 1.0 == 1.0-r0 commutativity.
+	* both bugs were surfaced (but deferred) during the 0.7.1
+	  test-pinning pass; see the 0.7.1 ChangeLog entry's
+	  "known bugs (deferred to 0.7.2)" subsection for context.
+	* tests: load_dep — save/restore bats EXIT / TERM / ERR
+	  traps so failing assertions register correctly (commit
+	  4e200da). Pre-fix, dep.in's top-level trap installation
+	  (line ~558) clobbered bats's `bats_exit_trap` used for
+	  result reporting, and dep.in's non-zero top-level lines
+	  fired bats's `bats_error_trap` mid-source — together,
+	  these caused FAILING bats assertions to silently drop
+	  from the TAP report (the test was counted in 1..N but
+	  neither `ok` nor `not ok` was emitted; bats reported
+	  `Executed M instead of expected N tests` and exited 1).
+	  Bisected to the root cause, fixed in test_helper.bash
+	  with explicit `trap -p ... + eval` save/restore. Re-
+	  enabled 2 negative tests in tests/unit/usecomponent.bats
+	  that had been dropped because of this limitation.
+	* comm_ver: defensive hardening on unknown status suffix
+	  (commit fdb30bd). The case statement's `*)` catch-all
+	  for an unrecognised suffix-category previously mapped to
+	  scn=99 (sorting it above every known class). Replaced
+	  with `format_error + return 128`, so a malformed cpv
+	  surfaces on stderr instead of silently miscomparing.
+	  Path is unreachable from normal callers (the suffix
+	  parser only accepts the literal set _alpha|beta|pre|rc|p)
+	  but the catch-all defends future parser extensions.
+	* tests: +7 unit tests in tests/unit/comm_ver.bats covering
+	  edge cases the audit hadn't pinned — status number ordering
+	  (alpha1 < alpha2, alpha10 > alpha9 numerically, alpha01
+	  == alpha1 leading-zero), letter+status precedence (1.2a_
+	  beta < 1.2b_alpha), cvs.* snapshot ordering, bare-vs-
+	  numbered suffix (1.0_pre < 1.0_pre1).
+	* tests: usecomponent env.d missing-file test uses
+	  `run --separate-stderr` (bats >=1.5) instead of a sed-
+	  wording-coupled $output assertion (commit a9a74d3).
+	* ebuild: BDEPEND test dependency tightened from
+	  `dev-util/bats` to `>=dev-util/bats-1.5.0` to match the
+	  --separate-stderr requirement above. Portage's current
+	  bats is 1.13.0, well above the floor; the bump enforces
+	  the minimum for older stage3-style setups.
+	* docs: 0.7.1 ChangeLog rewording — replaced specific line
+	  numbers in the bug-fix and known-bug bullets with topic
+	  descriptions that survive subsequent edits (commit 16cd7ea).
+	* Suite 231 (start of 0.7.2 scope) -> 245 (end).
+	* AI-assisted: the 0.7.2 work, like 0.7.1 / 0.7.0 / 0.6.0,
+	  used Claude (Anthropic) as a coding assistant. Every
+	  change reviewed by hand and validated against the bats
+	  unit + smoke tiers plus `make distcheck`.
+
 0.7.1 "Skeletons in the Cache" (20260516)
 
 	* fix: USE-resolution case-shadow (commit 8673115). The

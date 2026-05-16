@@ -1,5 +1,5 @@
-AC_INIT(udept, 0.7.1)
-AC_SUBST(PACKAGE_TAG, ["Skeletons in the Cache"])
+AC_INIT(udept, 0.7.2)
+AC_SUBST(PACKAGE_TAG, ["The Linter Was Right"])
 AM_INIT_AUTOMAKE([dist-xz no-dist-gzip foreign])
 
 AC_ARG_ENABLE(bash-completion, AS_HELP_STRING([--disable-bash-completion],

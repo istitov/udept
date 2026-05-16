@@ -21,7 +21,7 @@ RDEPEND="
 BDEPEND="
 	>=app-shells/bash-4.2:0
 	test? (
-		dev-util/bats
+		>=dev-util/bats-1.5.0
 		dev-util/bats-assert
 		dev-util/bats-support
 	)
