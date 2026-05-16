@@ -13,16 +13,31 @@ setup() {
 	require_dep_built
 }
 
-@test "smoke: --colour=html -i wraps output in HTML tags" {
+@test "smoke: --colour=html -i wraps output in balanced HTML tags" {
 	require_target PORTAGE_CPV
 	# --colour=no first, --colour=html second; last wins per dep's
 	# parser. Verifies the colorize machinery's HTML branch.
 	run timeout "$DEP_TIMEOUT" "$DEP_BIN" --colour=no --colour=html -i "$PORTAGE_CPV"
 	assert_success
 	# HTML mode emits <span class="..."> wrappers around colored
-	# segments. Asserting on the literal '<span' substring catches a
-	# regression that suppresses the HTML branch entirely.
+	# segments. The literal '<span' substring catches the case where
+	# the HTML branch is suppressed entirely.
 	assert_output --partial '<span'
+	# Tag balance: every opened <span...> must have a matching </span>.
+	# Catches a regression that emits half-rendered tags (e.g.
+	# truncated colorize output, or a missing close-tag handler) —
+	# the partial-match above would pass on that broken state.
+	# Counting via grep -o then wc -l; grep -c counts MATCHING LINES
+	# not matches, which would undercount when multiple tags appear
+	# on the same line.
+	local n_open n_close
+	n_open=$(printf '%s\n' "$output" | grep -oE '<span[[:space:]]' | wc -l)
+	n_close=$(printf '%s\n' "$output" | grep -oE '</span>' | wc -l)
+	if (( n_open != n_close )); then
+		printf 'unbalanced <span> tags: open=%d close=%d\n' \
+			"$n_open" "$n_close" >&2
+		return 1
+	fi
 }
 
 @test "smoke: --colour=auto under pipe matches --colour=no (no ANSI)" {

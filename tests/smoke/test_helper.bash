@@ -17,6 +17,61 @@
 # require_target() skips the calling @test when the target is not
 # installed (covers fresh stage3 containers that don't have, e.g.,
 # virtual/editor yet).
+#
+# ---------------------------------------------------------------------
+# EMPIRICALLY-VERIFIED CONTRACTS
+# ---------------------------------------------------------------------
+# Conventions dep has that smoke tests pin in place. Verified by
+# running each dispatch against a live tree at conversion time
+# (2026-05-16); a regression that changes any of these surfaces in
+# the named .bats file.
+#
+# Exit codes:
+#   --usage / --version / --help  → 0
+#   -l, -L, -t, -T, -S, -e, -k, -i, -f, -c, -C, --changelog, -u, -U,
+#     -z, -g, -F, -Q, -R, -r       → 0 on resolvable target
+#   -l <unresolvable cat/pkg>      → 0 with '!!! No matches for ...'
+#                                     (NOT non-zero; tested in errors.bats)
+#   -x exists                      → 0 (yes) or 1 (no)
+#   -X rev-exists                  → 0 (yes), 1 (no), or 124 (timeout on
+#                                     populated systems — walks the
+#                                     reverse-dep graph and may exceed
+#                                     wall-clock cap)
+#   -T reverse-tree                → 0 or 124 (timeout, same reason)
+#   -wp, -Pp, --exec redundant     → 0 or 124 (action walkers; can time
+#                                     out on full systems)
+#   --colour=auto under non-tty    → matches --colour=no (no ANSI)
+#   --colour=html                  → emits balanced <span ...>/</span>
+#
+# Output-format anchors that tests pin:
+#   -i info             → 'DESCRIPTION' label (uppercase, padded with :)
+#   -f contents         → file paths under '/usr' (portage's install
+#                          prefix on modern usr-merge Gentoo)
+#   -z size             → '<N> files: <size> <unit>' line
+#   --changelog=N       → 'From <path>/ChangeLog:' section headers
+#   -S depstrings       → 'DEPEND' / 'BDEPEND' / etc. block labels
+#   -F owners /usr/bin/bash → resolves to 'app-shells/bash'
+#   -L --for-emerge     → first row begins with '='
+#   -t tree-depends     → first line is the root cpv itself
+#   -k keywords         → table format with '[<slot>]' suffix per row
+#                          (e.g. '[3.14t]'). Gotcha: arch names render
+#                          as VERTICAL column headers (one letter per
+#                          row), so 'amd64' is NOT a contiguous
+#                          substring — assert on the slot tag instead.
+#
+# Acceptable skip targets (resolved by /var/db/pkg lookup):
+#   PORTAGE_CPV, BASH_CPV, PYTHON_CPV, GLIBC_CPV  → required on any
+#                                     working Gentoo install
+#   VIRTUAL_EDITOR_CPV, VIRTUAL_LIBC_CPV          → optional (fresh
+#                                     stage3 may lack them)
+#   OWNED_FILE                                    → /usr/bin/bash or
+#                                     /bin/bash; absent only on
+#                                     unusual layouts
+#
+# When adding a new smoke test, verify the contract by hand FIRST
+# against the real binary (e.g. `./src/dep --colour=no <flag> <target>`)
+# and lock in the substring you observed. Assumptions about exit codes
+# or output shape cost iterations.
 
 # Path to the built binary. Tests resolve it from BATS_TEST_DIRNAME so
 # this works from any cwd.
