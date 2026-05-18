@@ -47,7 +47,7 @@ requirements:
    `make check-smoke` needs a populated `/var/db/pkg` and the real
    eix/qatom/portageq binaries; per-test `require_target` skips
    gracefully when a target package isn't installed, so a fresh
-   stage3 still works. Reverse-walk tests (-T, -X, -wp, -Pp,
+   stage3 still works. Reverse-walk tests (-L, -T, -X, -wp, -Pp,
    depclean) accept exit 124 (timeout) alongside 0 — they scale
    with revdep count and can exceed any reasonable wall-clock cap
    on a populated maintainer system.
