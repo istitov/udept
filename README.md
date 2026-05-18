@@ -1,6 +1,7 @@
 # udept
 
 [![CI](https://github.com/istitov/udept/actions/workflows/ci.yml/badge.svg)](https://github.com/istitov/udept/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/istitov/udept?display_name=tag&sort=semver)](https://github.com/istitov/udept/releases/latest)
 
 A Gentoo Portage analysis toolkit, written in bash.
 
