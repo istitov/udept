@@ -118,6 +118,13 @@ section (don't leave it floating between sections); when adding a whole
 new topical area, copy an existing banner as the template and keep the
 shape so `make toc` keeps working.
 
+Almost every function has a one-line docstring of the form `# name:
+brief description.` directly above its definition.  Add one for any new
+function; keep the description ground-truth (echoes what it does, not
+the call sites).  Functions with richer multi-line inline comments
+(e.g. memoise, the comm_* version-compare primitives) keep those
+instead — the docstring convention is the minimum, not the maximum.
+
 ## Adding a new flag
 
 A new flag typically needs changes in several places:

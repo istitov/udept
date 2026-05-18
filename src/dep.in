@@ -66,6 +66,7 @@ ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
 # === short-circuit so trivial 'dep --version' doesn't pay portageq's startup.
 # ============================================================================
 
+# resolve_eroot_paths: probe portageq for EROOT/EPREFIX and rebind path constants for Prefix/chroot.
 function resolve_eroot_paths() {
 	# Fast path for the standard /-rooted layout — the defaults at the
 	# top of the script are already correct, and we save a portageq
@@ -101,6 +102,7 @@ function resolve_eroot_paths() {
 # === Adding a flag = one new `arg ...` line in that block.
 # ============================================================================
 
+# help_fmt: stdin -> stdout sed: colourise headings, options, usage tokens for --help output.
 function help_fmt() {
 	PLUSMINUS="$(iconv -c -f UTF-8 <<<$'\xc2\xb1')" || PLUSMINUS="+-"
 	sed -r -e "
@@ -185,11 +187,13 @@ function fmt_w() {
 	[[ "$line" ]] && echo -n "$line" 	# unterminated last line
 }
 
+# print_version: echo 'PROG vVERSION "TAG"' header.
 function print_version() {
 	cat <<END
 ${PROG} v. ${VERSION} "${TAG}"
 END
 }
+# print_usage: print version + synopsis + wrapped usage line + description.
 function print_usage() {
 	print_version
 	echo "    ${SYNOPSIS}!"
@@ -198,6 +202,7 @@ function print_usage() {
 	fmt_w <<<"${DESCRIPTION}"
 }
 
+# shopt_help: format a column of options for one shopt_category ($1: action/info/opt) at widths $2,$3.
 function shopt_help() {
 	local line i j c1=$2 c2=$3
 	for ((i=0; i<shopt_count; ++i)); do
@@ -231,6 +236,7 @@ INSTRUCTIONS="A package is unneeded if there is no installed package that depend
 A world file entry is redundant if there is another installed package that depends on it. When merging the new world file, the merging program used is sdiff(1). Your world file is located at $WORLD_FILE.
 Spring-clean will help find large sets of unneeded packages and orphaned circular dependency loops.
 Env vars - USE, ACCEPT_KEYWORDS, etc., can be used to override /etc/portage/make.conf."
+# print_help: drive the full --help layout: usage, then action/info/opt sections via shopt_help.
 function print_help() {
 	echo
 	print_usage
@@ -250,6 +256,7 @@ END
 
 declare -i shopt_count=0
 declare -a shopt_category shopt_short shopt_long shopt_desc shopt_type shopt_itype shopt_idefault
+# arg: register one CLI flag into the shopt_* parallel arrays (and predefault opt_arg_* on yes/auto).
 function arg() { 
 	shopt_category[$shopt_count]="$1"
 	shopt_short[$shopt_count]="$2"
@@ -318,6 +325,7 @@ arg opt n uninstalled 	"Include uninstalled packages in searches" '' BINARY no
 arg opt a ask 			"For -[Pdw]: ask to perform action" 	   '' BINARY yes
 arg opt p pretend 		"For -[Pdw]: just show what would be done" '' BINARY no
 
+# handle_arg_action: argv-parser callback: set do_arg_action when $1 matches the long/short name at idx $2.
 function handle_arg_action() {
 	case "$1" in
 		"--${shopt_long[$2]}" | "-"[${shopt_short[$2]}] )
@@ -326,6 +334,7 @@ function handle_arg_action() {
 	esac
 }
 
+# handle_arg_info: argv-parser callback for info flags; also harvests --changelog/-j NUMBER into changelog_entries.
 function handle_arg_info() {
 	case "$1" in
 		"--size" | "-z" ) 
@@ -359,6 +368,7 @@ function handle_arg_info() {
 	esac
 }
 
+# handle_arg_opt: argv-parser callback for opts; handles +/-/-=yes/no/NUMBER variants and sets opt_arg_* globals.
 function handle_arg_opt() {
 	case "$1" in
 		+K ) 							opt_arg_colour="no";;
@@ -519,6 +529,7 @@ esac
 # === html_wrap, stacking_sort, kill_comments_and_blanks.
 # ============================================================================
 
+# html_wrap: wrap a 'dep ...' run as a styled <pre>; re-execs dep with --colour=html and the original argv.
 function html_wrap() {
 	cat <<END
 <html>
@@ -618,6 +629,7 @@ function stacking_sort() {
 #	bar		bar
 }
 
+# kill_comments_and_blanks: sed-strip '#...' comments and blank lines from named files (no-op when no files given).
 function kill_comments_and_blanks() {
 	[[ $# -gt 0 ]] && sed -e 's/#.*//;/^$/d' "$@"
 }
@@ -632,10 +644,14 @@ function kill_comments_and_blanks() {
 # === log_message, memoise, backtrace.
 # ============================================================================
 
+# car: echo the first positional arg.
 function car() { echo "$1"; }
+# cdr: echo all positional args from $2 on.
 function cdr() { echo "${@:2}"; }
+# abl: echo all positional args except the last (mnemonic: 'all but last').
 function abl() { echo "${@:1:$(($#-1))}"; }
 
+# has: return 0 if $1 appears literally among $2..$N; else 1.
 function has() {
 	local a="$1" x; shift;
 	for x in "${@}"; do
@@ -644,19 +660,23 @@ function has() {
 	return 1
 }
 
+# pads: echo just enough spaces to pad string $2 out to width $1 (no string).
 function pads() {
 	local n=$1; shift; local s="$*"; ((n=n<${#s}?0:n-${#s}))
 	echo -n "${spaces:0:$n}"
 }
 
+# pad: echo $2 followed by spaces padding it out to width $1 (left-justify).
 function pad() {
 	echo -n "$2"; pads $1 "$2"
 }
 
+# rpad: echo spaces padding $2 to width $1 then $2 with newline (right-justify).
 function rpad() {
 	pads $1 "$2"; echo "$2"
 }
 
+# set_xterm_title: emit OSC title sequence on stderr to update xterm/screen titlebar (or html titlebar div).
 function set_xterm_title() {
 	if [[ "$opt_arg_colour" == "html" ]]; then
 		local args="${*//</&lt;}"
@@ -670,15 +690,18 @@ function set_xterm_title() {
 	fi
 }
 
+# format_error: stdin wrapped to COLUMNS-4, each line prefixed with red '!!!'; for error output.
 function format_error() {
 	fmt_w $((COLUMNS-4)) \
 	| while read line; do echo ${RD}!!!${NO} "$line"; done
 }
 
+# log_message: if opt_arg_verbose >= $1, send ${*:2} through format_error to stderr.
 function log_message() {
 	(( opt_arg_verbose >= $1 )) && format_error <<<"${*:2}" >&2
 }
 
+# memoise: wrap function $1: cache stdout per-arglist in $temp_dir/$1, on hit cat the file; replaces $1 in place.
 function memoise() {
 	mkdir $temp_dir/$1
 	eval "__memoised__$1() { $(typeset -f $1 | sed '1,2d;$d'); }
@@ -707,6 +730,7 @@ function memoise() {
 }
 
 shopt -s extdebug
+# backtrace: dump FUNCNAME stack with sources/linenos/args (with quoted argv) to stderr; needs extdebug.
 function backtrace() {
 	for (( j=${BASH_ARGC[0]}, i=1; i < ${#FUNCNAME[@]}; j+=${BASH_ARGC[$i]}, ++i )); do
 		args=""; for (( k=${BASH_ARGC[$i]}-1; k >= 0; --k )); do
@@ -729,6 +753,7 @@ VER_REGEXP='\(cvs\.\)\?\([[:digit:]]\+\.\)*[[:digit:]]\+[[:lower:]]\?\(_\(alpha\
 # === format_revdep.
 # ============================================================================
 
+# format_cpv: echo coloured cat/pn[-version] for a cpv (default cat=CY, pn=GR, version=CY).
 function format_cpv() {
 	cpv="$1"; cat="${cpv%/*}"; pv="${cpv#$cat/}"; pn="${pv/%-$VER_SHPAT}"
 	cat_col=${2:-CY}; pn_col=${3:-GR}; mlsr_col=${4:-CY}
@@ -769,6 +794,7 @@ function format_atom_for_emerge() {
 	echo "$atom"
 }
 
+# format_taint: echo coloured USE-condition tokens for cpv $1; colour reflects active/!/inverted USE state.
 function format_taint() {
 	local cpv="$1"
 	for tok in "${@:2}"; do
@@ -793,6 +819,7 @@ function format_taint() {
 	done
 }
 
+# format_depatom: echo coloured depatom — bang/op vs cpv vs '*' wildcard, colour varies by virtual/blocker.
 function format_depatom() {
 	batom="$1"; asvirtual="$2"
 	atom="${batom#!}"; bang="${batom/%$atom}"
@@ -807,6 +834,7 @@ function format_depatom() {
 	echo $bang$vs${!col}$cpv${NO}${star}
 }
 
+# format_revdep: read 'deppkg depatom taint' lines on stdin; print one formatted revdep per line, return count via $?.
 function format_revdep() {
 	asvirtual="$1"
 	indent="${2:-	}"
@@ -883,6 +911,7 @@ for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 # === read_repos_config, load_portage_config.
 # ============================================================================
 
+# profile_stack_read: recursively walk profile parent links from $1+$@, emit each profile dir; supports repo:path refs.
 function profile_stack_read() {
 	dir="$1"; shift
 	for rel in "$@"; do
@@ -899,6 +928,7 @@ function profile_stack_read() {
 	done
 }
 
+# profile_files: for each profile in $profile_stack, emit readable $profile/$1 (files inside if directory).
 function profile_files() {
 	while read path; do
 		if [[ -d "$path/$1" ]]; then
@@ -911,6 +941,7 @@ function profile_files() {
 	done <<<"$profile_stack"
 }
 
+# etc_portage_files: emit readable file(s) at /etc/portage/$1, expanding directory into a find -type f.
 function etc_portage_files() {
 	name="$1"
 	if [[ -d "$ETC_PORTAGE_DIR/$name" ]]; then
@@ -979,6 +1010,7 @@ function read_repos_config() {
 	)
 }
 
+# load_portage_config: delegate to portageq envvar for make.conf vars; populate USE_EXPAND, profile categories/provided/masks.
 function load_portage_config() {
 	# Portage's own resolution of make.conf / make.globals / profile
 	# make.defaults stack (with source directives, additive USE, etc.) is
@@ -1031,6 +1063,7 @@ function load_portage_config() {
 # === dep_satisfies_slot, accept_for.
 # ============================================================================
 
+# vercmp: test version1 ($1) op ($2) version2 ($3); op in =,~,<=,<,>=,>; via comm_ver convention.
 function vercmp() {
 	comm_ver "$1" "$3"
 	case "$2" in
@@ -1044,6 +1077,7 @@ function vercmp() {
 	esac
 }
 
+# dep_satisfies_mlsr: test whether installed mlsr $1 satisfies operator $2 + dep-mlsr $3 (handles star-glob and '').
 function dep_satisfies_mlsr() {
 	local t_mlsr="$1"; local vs="$2"; local d_mlsr="$3"
 	[[ "$vs" == @(<|>)* ]] && d_mlsr="${d_mlsr%\*}"  # >=foo-2* idiocy
@@ -1057,6 +1091,7 @@ function dep_satisfies_mlsr() {
 	vercmp "${t_mlsr}" "${vs}" "${d_mlsr}"
 }
 
+# dep_satisfies: test whether cpv $1 satisfies depatom $2 (cat/pn match + version); returns 2 on different cp.
 function dep_satisfies() {
 	local testpkg="$1" depatom="$2"
 	# Drop USE-dep brackets ([foo,-bar,baz?]) and slot suffixes (:0, :=, :*) —
@@ -1149,6 +1184,7 @@ function dep_satisfies_slot() {
 	return 0
 }
 
+# accept_for: compute effective ACCEPT_KEYWORDS for cp/mlsr from package.{accept_keywords,keywords}; result in nameref $3.
 function accept_for() {
 	local cp="$1" mlsr="$2" return="${3:-RESULT}"
 	# package.accept_keywords is the modern canonical name; package.keywords
@@ -1189,6 +1225,7 @@ function accept_for() {
 # === best_tree, edb_tree.
 # ============================================================================
 
+# best_tree: echo the highest-priority repo holding $1's ebuild that isn't keyword-masked (falls back to any, then PORTDIR).
 function best_tree() {
 	cpv="$1"
 	cp="${cpv/%-$VER_SHPAT}"; mlsr="${cpv#$cp-}"; pv="${cpv#*/}"
@@ -1211,6 +1248,7 @@ function best_tree() {
 # portage_trees stat-walks. Memoise.
 memoise best_tree
 
+# edb_tree: like best_tree but uses metadata/md5-cache presence instead of .ebuild; unused mlsr-version source pick.
 function edb_tree() {
 	cpv="$1"
 	cp="${cpv/%-$VER_SHPAT}"; mlsr="${cpv#$cp-}"; pv="${cpv#*/}"
@@ -1240,10 +1278,12 @@ function edb_tree() {
 # === allvirtuals, autouse, package_use_mask, usecomponent, dbuse.
 # ============================================================================
 
+# strip_iuse_prefixes: sed away EAPI-1+ +/- default-state prefixes on whitespace-separated IUSE list on stdin.
 function strip_iuse_prefixes() {
 	sed 's/[[:space:]]\+[+-]/ /g; s/^[+-]//'
 }
 
+# extract_var_from_vardb: cat /var/db/pkg/$2/$1, falling back to scraping NAME= from environment.bz2 if no plain file.
 function extract_var_from_vardb() {
 	local name="$1" cpv="$2"
 	if [[ "$name" && -e ${VARDB_DIR}/$cpv/$name ]]; then
@@ -1277,6 +1317,7 @@ function extract_var_from_edb() {
 	fi
 }
 
+# extract_var: echo one metadata var: vardb when --original-depends, else md5-cache via best_tree, with vardb fallback if no tree match.
 function extract_var() {
 	local name="$1" cpv="$2" tree="$3"
 	if [[ "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
@@ -1294,14 +1335,17 @@ function extract_var() {
 	fi
 }
 
+# keywords_for: store KEYWORDS array for cpv $1 (in tree $2) into nameref-named var $3 (default RESULT).
 function keywords_for() {
 	read -a "${3:-RESULT}" <<<"$(extract_var KEYWORDS $1 $2)"
 }
 
+# slot_for: echo SLOT for cpv $1 (in optional tree $2) via extract_var.
 function slot_for() {
 	extract_var SLOT $1 $2
 }
 
+# pkginternal_use_for: echo per-line IUSE defaults for cpv $1: '+flag' -> flag, '-flag' -> -flag; strip plain entries.
 function pkginternal_use_for() {
 	local -a IUSE; read -a IUSE <<<"$(extract_var IUSE $1)"
 	for (( i=0; i<${#IUSE[@]}; ++i )); do
@@ -1380,6 +1424,7 @@ function allvirtuals() {
 }
 memoise allvirtuals
 
+# autouse: echo profile use.defaults flags whose listed packages are installed (highest priority last via tac).
 function autouse() {
 	set_xterm_title "Calculating auto USE flags..."
 	kill_comments_and_blanks $(profile_files use.defaults) \
@@ -1392,6 +1437,7 @@ function autouse() {
 }
 memoise autouse
 
+# package_use_mask: echo merged use.mask for $1: profile package.use.mask matches stacked with unstacked use.mask.
 function package_use_mask() {
 	(
 		kill_comments_and_blanks $(profile_files package.use.mask) \
@@ -1402,6 +1448,7 @@ function package_use_mask() {
 	) | stacking_sort yes
 }
 
+# usecomponent: echo USE flags contributed by one component ($1 in env/pkg/conf/auto/pkginternal/env.d/...) for cpv $2.
 function usecomponent() {
 	# return a USE component, one flag per line, highest priority first
 	# TODO FIXME not correct yet - though OK for default case
@@ -1440,6 +1487,7 @@ function usecomponent() {
 	esac
 }
 
+# dbuse: echo effective USE flags for cpv $1: walks USE_ORDER components, applies package.use.mask, expands USE_EXPAND.
 function dbuse() {
 	local cpv=$1
 	if [[ "$cpv" && "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
@@ -1474,6 +1522,7 @@ function dbuse() {
 # === bug haul against this code (s1_s typo, rc-suffix ordering, 1.0-vs-1.0-r0).
 # ============================================================================
 
+# comm_float: compare two digit strings as fractional decimals; return +-7 sign, 0 equal (sign via mod-256).
 function comm_float() {
 	local f1="$1" f2="$2" i d1 d2
 	for ((i=0;i<${#f1}||i<${#f2};++i)); do
@@ -1606,6 +1655,7 @@ function comm_ver() {
 # === virtuals_from, virtual_version.
 # ============================================================================
 
+# highest_mlsr: echo the highest mlsr among $@ by repeated vercmp '>' insertions.
 function highest_mlsr() {
 	local highest=""
 	local mlsr
@@ -1619,6 +1669,7 @@ function highest_mlsr() {
 	echo $highest
 }
 
+# method_sort: insertion sort lines on stdin using a custom comparator '$@ a b' returning 0 if a sorts after b.
 function method_sort() {
 	# An insertion sort, or something like it: we expect the input list to 
 	# be largely sorted so want to compare new elements to the top end of 
@@ -1637,15 +1688,18 @@ function method_sort() {
 	for x in "${list[@]}"; do cat <<<"$x"; done
 }
 
+# is_ver_higher: true if the leading mlsr token of $1 sorts strictly higher than that of $2 (for method_sort).
 function is_ver_higher() {
 	# vercmp "${1% *}" ">" "${2% *}"
 	comm_ver "${1% *}" "${2% *}"; (( $? > 0 && $? < 128 ))
 }
 
+# mlsr_sort: sort mlsr lines on stdin ascending via method_sort is_ver_higher.
 function mlsr_sort() {
 	method_sort is_ver_higher
 }
 
+# has_version: test whether VARDB contains any pkg matching $1 (cat/pn[-ver[*]] with optional <,<=,=,~,>=,> op).
 function has_version() {
 	pkgspec="$1"
 	if [[ "$pkgspec" == virtual/* ]]; then
@@ -1717,6 +1771,7 @@ function virtual_version() {
 # === dot_depgraph — emits Graphviz .dot for visualisation of dep trees.
 # ============================================================================
 
+# dot_depgraph: emit Graphviz .dot for tree/reverse-tree/depends/rev-depends queries with SYSTEM/WORLD clusters.
 function dot_depgraph() {
 	local -a handled=() queue=()
 	if [[ "$1" == @(""|world|system) ]]; then
@@ -1794,11 +1849,13 @@ function dot_depgraph() {
 # === resolve_depatom.
 # ============================================================================
 
+# has_revdepend: true if _smartdep finds any reverse dependency for the given target; thin wrapper.
 function has_revdepend() {
 	# TODO FIXME make more efficient
 	[[ "$(_smartdep "$@")" ]]
 }
 
+# add_deps_to_required: recursive: resolve depatom $1 to a cpv, append to $temp_dir/required, walk its deps; respects --depth/--unique.
 function add_deps_to_required() {
 	local dep="$1"; local ensure="$2"; local cpv
 	required=$(<$temp_dir/required)
@@ -1824,6 +1881,7 @@ function add_deps_to_required() {
 	fi
 }
 
+# makeideal: spring-clean: build a required-set from system+world+kernel, diff against installed, then emerge -vC/-v1.
 function makeideal() {
 	:> $temp_dir/required
 	echo "${YL}SYSTEM PROFILE${NO}:"
@@ -1854,6 +1912,7 @@ function makeideal() {
 					$(echo "$missing" | sed 's/^/=/')
 }
 	
+# raw_depends: emit RDEPEND/PDEPEND/IDEPEND (+DEPEND/BDEPEND if build-time) of cpv $1 as one tokenised entry per line.
 function raw_depends() {
 	cpv=$1
 	(
@@ -1935,6 +1994,7 @@ function crunch_depends() {
 	local taint=""
 	while cd_evaluate_single; do :; done
 }
+# cd_evaluate_single: crunch_depends inner: read one depend token from stdin and recurse into use-?, ||, ( ), atom, blocker.
 function cd_evaluate_single() {
 	read tok || return 1
 	case "$tok" in
@@ -2003,6 +2063,7 @@ function cd_evaluate_single() {
 	esac
 	return 0
 }
+# cd_discard_single: skip one depend-tree branch (matching parens) without evaluating — used for the inactive use? arm.
 function cd_discard_single() {
 	local depth=0 tok
 	while read tok; do case "$tok" in
@@ -2014,6 +2075,7 @@ function cd_discard_single() {
 	esac; done
 	(( depth == 0 )) && [[ "$tok" ]]
 }
+# cd_already_installed: test whether all atoms in 'batom taint' lines on $1 resolve to an installed cpv (with blocker inversion).
 function cd_already_installed() {
 	echo "$1" | while read batom taint; do
 		if [[ "$(resolve_depatom "${batom#!}" "yes" 2>/dev/null)" ]]
@@ -2024,16 +2086,19 @@ function cd_already_installed() {
 		fi
 	done
 }
+# cd_satisfiable: test whether all atoms in 'batom taint' lines on $1 resolve to *some* cpv (installed or available).
 function cd_satisfiable() {
 	echo "$1" | while read batom taint; do
 		[[ "$(resolve_depatom ${batom#!} 2>/dev/null)" ]] || return 1
 	done
 }
+# cd_is_in_use: test whether use selector $1 (optionally !-prefixed) matches the caller's $my_use list.
 function cd_is_in_use() {
 	if has "${1#!}" $my_use; then [[ "${1:0:1}" != '!' ]]
 	else [[ "${1:0:1}" == '!' ]]; fi
 }
 
+# resdepend: emit one 'atom taint' line per resolved dependency of cpv $1; raw_depends piped through crunch_depends.
 function resdepend() {
 	local cpv="$1" ordeps="$2"
 	set_xterm_title "Calculating dependencies of: $cpv"
@@ -2091,6 +2156,7 @@ function _world_sets_expand_one() {
 }
 memoise world_sets_expand
 
+# db_grep: find installed-or-available packages whose *DEPEND text contains regex $1; optionally include tree path.
 function db_grep() {
 	local needle="$1" with_tree="$2" attr="$3" tree cpv
 	if [[ "$opt_arg_original_depends" ]]; then
@@ -2132,6 +2198,7 @@ function db_grep() {
 	fi
 }
 
+# potential_revdepends: echo cpvs whose *DEPEND mentions cp $1 as a leading atom, filtered by exclusion list $2.
 function potential_revdepends() {
 	local needle="$1" exclude="$2" excl_sed="\!^$" excl
 	for excl in $exclude; do
@@ -2146,6 +2213,7 @@ function potential_revdepends() {
 	| sed -e "$excl_sed"
 }
 
+# info_action_rev-depends: --rev-depends: _smartdep on $1 + asvirtual=$2, piped through format_revdep.
 function info_action_rev-depends() {
 	local asvirtual="$2"
 	_smartdep "$1" | format_revdep "$asvirtual"
@@ -2277,6 +2345,7 @@ function _smartdep() {
 }
 memoise _smartdep
 
+# _smartdep_nopv: slot-agnostic reverse-dep search: walk potential_revdepends, resdepend filter, plus SYSTEM/WORLD/virtuals.
 function _smartdep_nopv () {
 	local needle="$1"	# cp
 	set_xterm_title "Reverse dependencies of: $needle"
@@ -2310,6 +2379,7 @@ function _smartdep_nopv () {
 	trap - SIGPIPE
 }
 
+# provided_and_avail: echo installed mlsrs of cp $1 (highest first), then available mlsrs unless installed-only ($2).
 function provided_and_avail() {
 	trap return SIGPIPE
 	provided_mlsrs "$1" | mlsr_sort | tac
@@ -2317,6 +2387,7 @@ function provided_and_avail() {
 	trap - SIGPIPE
 }
 
+# pv_to_cpv: for bare pkg-version $1, echo each category/PV that has a matching package dir in any tree.
 function pv_to_cpv() {
 	pv="$1"
 	p="${pv/%-$VER_SHPAT?(\*)}"
@@ -2334,6 +2405,7 @@ function pv_to_cpv() {
 # every repo (~150 cats × 7 trees of stat()s per call). Memoise it.
 memoise pv_to_cpv
 
+# _resolve_depatom_inner_virtual: resolve_depatom helper: try v_cpv (a virtual provider) against operator/version, emit cpv on first hit.
 function _resolve_depatom_inner_virtual() {
 	v_cp="${v_cpv%-$VER_SHPAT?(\*)}"; v_mlsr="${v_cpv#${v_cp}?(-)}"
 	provided_and_avail $v_cp "$installed_only" \
@@ -2346,6 +2418,7 @@ function _resolve_depatom_inner_virtual() {
 	return 1
 }
 
+# _resolve_depatom_inner: resolve_depatom helper: try direct cp matches first, then walk allvirtuals for indirect providers.
 function _resolve_depatom_inner() {
 	d_cp="${d_cpv/%-$VER_SHPAT?(\*)}"; d_mlsr="${d_cpv##${d_cp}?(-)}"
 	provided_and_avail $d_cp "$installed_only" \
@@ -2359,6 +2432,7 @@ function _resolve_depatom_inner() {
 	return 1
 }
 
+# resolve_depatom: echo first cpv satisfying depatom $1 (installed-only when $2); slot-agnostic, memoised.
 function resolve_depatom() {
 	depatom="$1"; installed_only="$2"
 	set_xterm_title "Resolving dependency: $depatom"
@@ -2387,6 +2461,7 @@ memoise resolve_depatom
 # === is_package_unmasked, get_mask_comment, keyword_sym, is_keyword_masked.
 # ============================================================================
 
+# is_in_maskfile: true if cp/mlsr ($1/$2) is masked by any line in mask files $3+ (after stacking_sort, !-inverts).
 function is_in_maskfile() {
 	local cp="$1"; local mlsr="$2"; shift 2
 	kill_comments_and_blanks "$@" 2>/dev/null | grep "$cp" | stacking_sort yes \
@@ -2397,6 +2472,7 @@ function is_in_maskfile() {
 	done || return 0; return 1
 }
 
+# is_inclusion_masked: true if profile 'packages' file *include* atom doesn't accept cp/mlsr — i.e. excluded from inclusion-mask.
 function is_inclusion_masked() {
 	local cp="$1" mlsr="$2"
 	grep "$cp" <<<"${allprofilepackages}" \
@@ -2408,6 +2484,7 @@ function is_inclusion_masked() {
 	done || return 0; return 1
 }
 
+# is_package_masked: true if cp/mlsr is masked by profile inclusion or package.mask (unless covered by package.unmask, ret 2).
 function is_package_masked() {
 	local cp="$1" mlsr="$2"
 	is_inclusion_masked "$cp" "$mlsr" && return 0
@@ -2415,12 +2492,14 @@ function is_package_masked() {
 	is_in_maskfile "$cp" "$mlsr" $(profile_files_extra package.mask)
 }
 
+# is_package_unmasked: true if cp/mlsr is in profile package.mask AND in /etc/portage/package.unmask.
 function is_package_unmasked() {
 	local cp="$1"; local mlsr="$2"
 	is_in_maskfile $cp $mlsr $(profile_files_extra package.mask) \
 	&& is_in_maskfile $cp $mlsr $(etc_portage_files package.unmask)
 }
 
+# get_mask_comment: echo coloured mask provenance for cp/mlsr: SYSTEM PROFILE or atom+commentary from each profile package.mask.
 function get_mask_comment() {
 	local cp="$1"; local mlsr="$2"
 
@@ -2462,6 +2541,7 @@ function get_mask_comment() {
 	done | tac
 }
 
+# keyword_sym: echo a one-char keyword status sym (' ', '~', '-') for cp/mlsr/tree; return code encodes accept origin.
 function keyword_sym() {
 	local cp=$1 mlsr=$2 tree=$3
 	local my_keywords my_accept k_unstable="" k_masked=""
@@ -2493,6 +2573,7 @@ function keyword_sym() {
 	echo "-"; return 0;
 }
 
+# is_keyword_masked: true (return 0) if cp/mlsr ($1/$2) in tree $3 isn't accepted by ACCEPT_KEYWORDS+package.accept_keywords.
 function is_keyword_masked() {
 	local cp=$1 mlsr=$2 tree=$3
 	local my_keywords my_accept
@@ -2518,6 +2599,7 @@ function is_keyword_masked() {
 # === not_in_tree.
 # ============================================================================
 
+# avail_versions: for cp $1 walk all trees' ebuilds; emit each mlsr (+tree when $2); optionally drop pmask/kmask via $4/$5.
 function avail_versions() {
 	local cp="$1" showtree="$2" _unused="$3"
 	local excl_pmask="$4" excl_kmask="$5"
@@ -2537,11 +2619,13 @@ function avail_versions() {
 }
 memoise avail_versions
 
+# provided_mlsrs: echo injected_mlsrs followed by installed_mlsrs (both for cp $1).
 function provided_mlsrs() {
 	injected_mlsrs "$@"
 	installed_mlsrs "$@"
 }
 
+# injected_mlsrs: echo each mlsr declared by profile package.provided for cp $1.
 function injected_mlsrs() {
 	cp="$1"
 	for x in $profileprovided; do
@@ -2549,6 +2633,7 @@ function injected_mlsrs() {
 	done
 }
 
+# installed_mlsrs: echo each installed mlsr (vardb dir) for cp $1, optionally skipping masked ones when $2.
 function installed_mlsrs() {
 	cp="$1"; remove_masked="$2"
 	for dir in ${VARDB_DIR}/$cp-$VER_SHPAT; do
@@ -2563,12 +2648,14 @@ function installed_mlsrs() {
 }
 memoise installed_mlsrs
 
+# all_installed_cpvs: echo every installed cpv (sorted) by listing vardb cat/pkg-ver dirs.
 function all_installed_cpvs() {
 	find ${VARDB_DIR} -mindepth 2 -maxdepth 2 -type d \
 	| cut -c13- \
 	| sort
 }
 
+# all_installed_cp_mlsrs: emit one 'cp mlsr mlsr...' line per installed cp, grouping mlsrs by their shared cp.
 function all_installed_cp_mlsrs() {
 	oldcp=""
 	all_installed_cpvs | while read cpv; do
@@ -2583,6 +2670,7 @@ function all_installed_cp_mlsrs() {
 	echo
 }
 
+# is_running_kernel: true if cpv $1 is installed, provides virtual/linux-sources, and its KV matches uname -r.
 function is_running_kernel() {
 	cpv=$1
 	[[ -d ${VARDB_DIR}/$cpv ]] \
@@ -2590,6 +2678,7 @@ function is_running_kernel() {
 		&& [[ "$(extract_var_from_vardb KV $cpv)" == "$(uname -r)" ]]
 }
 
+# not_in_tree: warn on stderr when cp/mlsr is installed but masked/kmasked/missing-ebuild; advisory only.
 function not_in_tree() {
 	cp=$1; mlsr=$2
 	if tree=$(best_tree $cp-$mlsr); then
@@ -2623,6 +2712,7 @@ END
 # === redundant.
 # ============================================================================
 
+# rtnode: reverse-tree recursion: walk _smartdep of $1, format each, recurse on non-SYSTEM/WORLD/KERNEL; flags circular.
 function rtnode() {
 	local node="$1" noworld="$2" forcircular="$3" ordeps="$4"
 	local allcircular=0
@@ -2655,6 +2745,7 @@ function rtnode() {
 	return $allcircular
 }
 
+# info_action_tree-depends: --tree-depends: reset $temp_dir/required and recursively add_deps_to_required for $1.
 function info_action_tree-depends() {
 	set_xterm_title "Displaying dependency tree of $1"
 	indent=""
@@ -2662,6 +2753,7 @@ function info_action_tree-depends() {
 	add_deps_to_required "$1" yes
 }
 
+# info_action_reverse-tree: --reverse-tree: initialise rt_encountered (resolving star_arg if no version), recurse via rtnode.
 function info_action_reverse-tree() {
 	set_xterm_title "Displaying reverse dependency tree of $1"
 	indent=""
@@ -2674,6 +2766,7 @@ function info_action_reverse-tree() {
 	rtnode "$@"
 }
 
+# print_depstring: pretty-print one named DEPEND var ($1) of cpv $2 with indented parens, taint, resolved cpv per atom.
 function print_depstring() {
 	local name=$1; local cpv="$2"
 	local indent="    "; local taint=""; local or=""
@@ -2699,6 +2792,7 @@ function print_depstring() {
 	esac; done
 }
 
+# info_action_depstrings: --depstrings: print_depstring for each of DEPEND/BDEPEND/RDEPEND/PDEPEND/IDEPEND.
 function info_action_depstrings() {
 	set_xterm_title "Displaying raw dependencies of $1"
 	local cpv="$1"
@@ -2712,6 +2806,7 @@ function info_action_depstrings() {
 	echo
 }
 
+# info_action_depends: --depends: resdepend + format each atom with taint padding and resolved cpv; --unique-depends filters.
 function info_action_depends() {
 	set_xterm_title "Displaying dependencies of $1"
 	local cpv="$1" excl="" x
@@ -2741,6 +2836,7 @@ function info_action_depends() {
 	echo
 }
 
+# info_action_exists: --exists: report which resolved deps of $1 are themselves satisfied by any of the trailing args.
 function info_action_exists() {
 	local cpv="$1"
 	resdepend "$cpv" \
@@ -2759,6 +2855,7 @@ function info_action_exists() {
 	done; [[ "$any" ]]; )
 }
 
+# info_action_rev-exists: --rev-exists: report which reverse deps of $1 are pulled in by any of the trailing args (via dep_satisfies).
 function info_action_rev-exists() {
 	_smartdep "$1" \
 	| ( local any=""
@@ -2773,6 +2870,7 @@ function info_action_rev-exists() {
 	done; [[ "$any" ]]; )
 }
 
+# redundant_of_all_cp_mlsrs: for cp $1 and each mlsr in $2+: echo redundant cpv (no revdep), also write 'cp mlsr' to stderr.
 function redundant_of_all_cp_mlsrs() {
 	cp=$1; shift; mlsrs="$*"
 	for mlsr in $mlsrs; do
@@ -2782,6 +2880,7 @@ function redundant_of_all_cp_mlsrs() {
 	done
 }
 
+# redundant: drive depclean/purge selection: list redundant cpvs across all installed cps (or filtered by $@).
 function redundant() {
 	if [[ -z "$*" ]]; then
 		all_installed_cp_mlsrs
@@ -2805,6 +2904,7 @@ function redundant() {
 # === info_action_versions.
 # ============================================================================
 
+# info_action_changelog: --changelog: print the relevant ChangeLog entries (filtered by version cutoff or N entries) with colour.
 function info_action_changelog() {
 	local cpv="$1"
 	local tree cp="${cpv%-$VER_SHPAT}"
@@ -2838,6 +2938,7 @@ s| \([[:graph:]]\+\)\([,:]\)| '"$Cy"'\1'"$NO"'\2|g
 '
 }
 
+# use_desc: echo localised description for USE flag $1 in cpv $2 by scraping use.desc + use.local.desc.
 function use_desc() {
 	local flag="$1" cpv="$2"
 	sed -e 's!^\('${cpv%-$VER_SHPAT}':\)\?'$flag' - !!;t;d' \
@@ -2848,6 +2949,7 @@ function use_desc() {
 	&& echo "${RD}!!!${NO} No description available"
 }
 
+# info_action_usedesc: --usedesc: per-flag for IUSE of cpv $1, mark +/-/(masked)/changed-from-original and print description.
 function info_action_usedesc() {
 	set_xterm_title "Displaying USE flags for $1"
 	local cpv="$1"
@@ -2877,6 +2979,7 @@ function info_action_usedesc() {
 	done
 }
 
+# info_action_iuse: --iuse: list installed/available cpvs whose IUSE contains flag $1; verbose mode appends descriptions.
 function info_action_iuse() {
 	set_xterm_title "Listing packages with $1 in IUSE"
 	db_grep "\\<$1\\>" "yes" IUSE \
@@ -2923,6 +3026,7 @@ function eval_ru_list() {
 	return $result
 }
 
+# eval_ru_expr: evaluate one REQUIRED_USE expression from RU_TOKS at ru_idx; appends failing clause to RU_FAIL.
 function eval_ru_expr() {
 	local tok="${RU_TOKS[ru_idx]}"
 	case "$tok" in
@@ -3000,6 +3104,7 @@ function eval_ru_expr() {
 	esac
 }
 
+# info_action_required-use: --required-use: parse and eval REQUIRED_USE of cpv $1 against active USE, report violations, bump counter.
 function info_action_required-use() {
 	local cpv="$1"
 	set_xterm_title "Checking REQUIRED_USE for $cpv"
@@ -3040,6 +3145,7 @@ function metadata_extract() {
 		$tree/$cp/metadata.xml
 }
 
+# info_action_info: --info: print metadata block for cpv $1 (URLs, license, INHERITED, ebuild path, herd/email, patches, logs).
 function info_action_info() {
 	set_xterm_title "Displaying information for $1"
 	local cpv="$1"; local cp=${cpv%-$VER_SHPAT} pv=${cpv#*/}
@@ -3084,6 +3190,7 @@ function info_action_info() {
 	fi
 }
 
+# sort_trees: echo input trees ordered: unknown first, then portage_trees ascending priority, INJECTED last.
 function sort_trees() {
 	# sort: other <= portage <= overlay <= INJECTED (last best)
 	local -a t=("$@") pt=(); local x i
@@ -3101,6 +3208,7 @@ function sort_trees() {
 	done
 }
 
+# mlsr_trees_sorted: emit 'mlsr tree' pairs for cp $1 (available + installed + injected), sorted by mlsr then sort_trees.
 function mlsr_trees_sorted() {
 	local cp="$1"
 	( 
@@ -3133,6 +3241,7 @@ function mlsr_trees_sorted() {
 	)
 }
 
+# info_action_keywords: --keywords: render the eshowkw-style cross-arch keyword table for cp $1 (one row per mlsr).
 function info_action_keywords() {
 # thanks ciaranm for eshowkw
 	set_xterm_title "Displaying cross-arch keywords for $1"
@@ -3197,6 +3306,7 @@ function info_action_keywords() {
 	done
 }
 
+# info_action_versions: --versions: per available/installed mlsr of cp $1, print [MKI keyword] line with mask comment.
 function info_action_versions() {
 	set_xterm_title "Displaying versions of $1"
 	local cp="$1"; local pn=${cp#*/}
@@ -3251,6 +3361,7 @@ function info_action_versions() {
 # === star_arg, info_action_search.
 # ============================================================================
 
+# format_bytes: echo $1 as human-readable size (bytes/KiB/MiB/.../PiB) with 0..2 fractional digits.
 function format_bytes() {
 	bytes=$1
 	units=( bytes KiB MiB GiB TiB PiB )
@@ -3282,6 +3393,7 @@ pkgsize_tpkgs=0
 pkgsize_tfiles=0
 pkgsize_tinacc=0
 pkgsize_tbytes=0
+# info_action_size: --size: count CONTENTS files of cpv $1, sum sizes, accumulate into pkgsize_t* totals.
 function info_action_size() {
 	cpv="$1"
 	set_xterm_title "Calculating disk usage of $cpv..."
@@ -3302,12 +3414,14 @@ function info_action_size() {
 	(( pkgsize_tinacc += inacc, pkgsize_tbytes += bytes ))	
 }
 
+# pkgsize_arg: print a 'Size of CPV:' header and call info_action_size $1.
 function pkgsize_arg() {
 	set_xterm_title "Calculating size of $1"
 	echo "Size of $(format_cpv $1):"
 	info_action_size $1
 }
 
+# pkgsize_summary: if more than one package was sized, print the total files+inaccessible+bytes summary.
 function pkgsize_summary() {
 	(( pkgsize_tpkgs <= 1 )) && return
 	echo
@@ -3317,12 +3431,14 @@ function pkgsize_summary() {
 	echo "Total: $BR$pkgsize_tfiles$NO files$finacc: $BR$bytes$NO"
 }
 
+# formatcontentsentry: sed-colour CONTENTS lines: obj -> path, sym -> CY src -> tgt, dir -> bold path.
 function formatcontentsentry() {
 	sed -e "s:^obj \(.*\) [[:xdigit:]]\+ [[:digit:]]\+$:\1:;
 		s:^sym \(.*\) -> \(.\+\) [[:digit:]]\+$:$CY\1$NO -> \2:;
 		s:^dir \(.*\)$:$BR\1$NO:"
 }
 
+# info_action_contents: --contents: grep -v debug entries from $1's CONTENTS, pipe through formatcontentsentry.
 function info_action_contents() {
 	set_xterm_title "Displaying contents of $1"
 	grep -v '^\(obj\|sym\|dir\) /usr/src/debug\(/\|$\)' \
@@ -3350,6 +3466,7 @@ function canonicalize_path() {
 	echo "${path:-/}"
 }
 
+# info_action_owners: --owners: canonicalise path $1 and look up its owner; falls back to usr-merge twins and realpath.
 function info_action_owners() {
 	path="$(canonicalize_path "$1")"
 	local result
@@ -3383,6 +3500,7 @@ function info_action_owners() {
 	[[ "$result" ]] && printf '%s\n' "$result"
 }
 
+# info_action_owners_match: grep all CONTENTS for path $1; emit owning cpvs (with file detail in non-emerge mode).
 function info_action_owners_match() {
 	local path="$1"
 	# Escape characters with meaning in basic regex so a path containing
@@ -3424,10 +3542,12 @@ function info_action_owners_match() {
 	fi
 }
 
+# info_action_category: --category: echo coloured category prefix of cpv/atom $1.
 function info_action_category() {
 	echo "    ${CY}${1%/*}${NO}"
 }
 
+# info_action_catpackages: --catpackages: list packages in category $1 (installed; +tree packages if --uninstalled).
 function info_action_catpackages() {
 	if ! has $1 $categories; then
 		echo "not a recognised category: $1" | format_error >&2
@@ -3478,6 +3598,7 @@ function info_action_virtuals() {
 	done
 }
 
+# info_action_provides: --provides: list virtuals that cp $1 provides, each resolved to a concrete cpv (or '!!!').
 function info_action_provides() {
 	set_xterm_title "Displaying virtuals provided by $1"
 	local cpv=$1 cp=${1%-$VER_SHPAT} virtual fcpv vcpv
@@ -3490,6 +3611,7 @@ function info_action_provides() {
 	done
 }
 
+# star_arg: expand a partial pkg arg into RESULT[] of matching cpvs; with $2 keeps only highest, $3 limits to installed.
 function star_arg() {
 	target=${1%-}; highest_only=$2; installed_only=$3
 	category=${target%/*}
@@ -3517,6 +3639,7 @@ function star_arg() {
 		| if [[ "$highest_only" ]]; then tail -n 1; else cat; fi)"
 }
 
+# info_action_search: --search: glob installed (+available with --uninstalled) cpvs for substring of $1, print sorted unique.
 function info_action_search() {
 	trap return SIGPIPE
 	(
@@ -3549,6 +3672,7 @@ function info_action_search() {
 # === expand_arg, argv_dep, lower, upper, userquery.
 # ============================================================================
 
+# expand_arg: fill RESULT[] for one user arg per shopt info-type's PNAME/PACKAGE/VIRTUAL/XPACKAGE expansion rules.
 function expand_arg() {
 	arg="$1"
 	if [[ "${shopt_type[${do_info_shopt_idx}]}" != *@(PNAME|PACKAGE|VIRTUAL)* ]]; then
@@ -3585,6 +3709,7 @@ function expand_arg() {
 	fi
 }
 
+# argv_dep: info dispatcher: expand each argv, call info_action_$do_arg_info per match; honour LEGION/--size summary.
 function argv_dep() {
 	if [[ "$do_arg_info" == "tree-depends" && "$opt_arg_unique_depends" ]]; then
 		format_error >&2 <<END
@@ -3608,10 +3733,12 @@ END
 	return 0
 }
 
+# lower: echo $* lowercased via tr.
 function lower() {
 	echo "$*" | tr '[[:upper:]]' '[[:lower:]]'
 }
 
+# upper: echo $* uppercased via tr.
 function upper() {
 	echo "$*" | tr '[[:lower:]]' '[[:upper:]]'
 }
@@ -3671,6 +3798,7 @@ function userquery() {
 # === bashrc_filter, filter_etc_portage, print_stats, ask_install_new_file.
 # ============================================================================
 
+# install_new_file: cat $1 over $2, escalating via doas/sudo/su when non-root; printf %q quoted to defend special chars.
 function install_new_file() {
 	local new="$1" target="$2"
 	# Already root: no privilege escalation needed.
@@ -3708,6 +3836,7 @@ function install_new_file() {
 	done
 }
 
+# filter_world: pruneworld: drop entries from $WORLD_FILE whose reverse-tree is empty, then ask_install_new_file the rewrite.
 function filter_world() {
 	# Operates only on /var/lib/portage/world (atom entries). The companion
 	# /var/lib/portage/world_sets file (set references like @kde-meta) is
@@ -3738,6 +3867,7 @@ function filter_world() {
 	ask_install_new_file $temp_dir/oldworld $temp_dir/newworld /var/lib/portage/world "world file"
 }
 
+# filter_etc_file: drive one /etc/portage file's filter: preserve comments, run filter[] callback per line, write to $newfile.
 function filter_etc_file() {
 	local filename="$1" filter=("${@:2}")
 	local newfile="${temp_dir}/${1//\//_}"
@@ -3781,6 +3911,7 @@ function filter_etc_file() {
 	ask_install_new_file "$filename" "$newfile" "$filename" "$1"
 }
 
+# package_star_filter: filter_etc dispatcher: expand depatom + args, call test fn per cp/mlsr, retain only effectual args.
 function package_star_filter() {
 	local test="$1" installed_only="$2" message="$3" line="$4"
 	local depatom_args; read -a depatom_args <<<"$line"
@@ -3827,6 +3958,7 @@ function package_star_filter() {
 	return 1
 }
 
+# package_use_filter: drop USE flags from package.use line that already match dbuse — i.e. are already on/off naturally.
 function package_use_filter() {
 	local depatom="$1" cp="$2" mlsr="$3" flags=("${@:4}")
 
@@ -3844,6 +3976,7 @@ function package_use_filter() {
 	[[ "${newflags[*]}" ]]
 }
 
+# package_mask_filter_inner: package.mask line keepable for cp/mlsr? false if already kw-masked, inclusion-masked, unmasked, or otherwise-masked.
 function package_mask_filter_inner() {
 	local depatom="$1" cp="$2" mlsr="$3" args=("${@:4}")
 	if is_keyword_masked $cp $mlsr $tree; then
@@ -3860,6 +3993,7 @@ function package_mask_filter_inner() {
 	return 1
 }
 
+# package_mask_filter: package.mask filter: bare '-atom' kept iff still on stack; otherwise delegate to star_filter+inner.
 function package_mask_filter() {
 	local depatom="$1"
 	if [[ "$depatom" == -* ]]; then
@@ -3873,6 +4007,7 @@ function package_mask_filter() {
 	package_star_filter package_mask_filter_inner "" "all matching available packages unmasked or otherwise masked" "$depatom"
 }
 
+# package_unmask_filter: package.unmask line keepable? false if cp/mlsr is kw-masked, inclusion-masked, already unmasked, or not actually masked.
 function package_unmask_filter() {
 	local depatom="$1" cp="$2" mlsr="$3" args=("${@:4}")
 	if is_keyword_masked $cp $mlsr $tree; then
@@ -3889,6 +4024,7 @@ function package_unmask_filter() {
 	return 1
 }
 
+# package_keywords_filter: drop keywords from package.accept_keywords lines that are redundant w.r.t. KEYWORDS + ACCEPT_KEYWORDS.
 function package_keywords_filter() {
 	local depatom="$1" cp="$2" mlsr="$3" keywords=("${@:4}")
 	# do any keywords affect this package?
@@ -3934,6 +4070,7 @@ function package_keywords_filter() {
 	[[ "${used_args[*]}" ]]
 }
 
+# profile_packages_filter: profile/packages line keepable iff its '-X' removal isn't already on stack (or '+X' isn't already on stack).
 function profile_packages_filter() {
 	local pline="$1"
 	if [[ "$pline" == -* ]]; then
@@ -3951,6 +4088,7 @@ function profile_packages_filter() {
 	fi
 }
 
+# bashrc_filter: rewrite a bashrc '|| [[ $CATEGORY/$P == foo ]] && ...' chain, keeping only branches whose ebuild env matches an installed pkg.
 function bashrc_filter() {
 	# $list is a scalar here. Shellcheck's cross-function inference
 	# sees an array named 'list' in stacking_sort (~line 1481) and
@@ -4012,6 +4150,7 @@ function bashrc_filter() {
 	return 0
 }
 
+# filter_etc_portage: --filter-etc-portage: run package.use / package.mask / package.unmask / package.accept_keywords / profile/packages / bashrc.
 function filter_etc_portage() {
 	filter_etc_file package.use package_star_filter package_use_filter yes "all use flags redundant"
 	filter_etc_file package.mask package_mask_filter
@@ -4024,6 +4163,7 @@ function filter_etc_portage() {
 	filter_etc_file bashrc bashrc_filter
 }
 	
+# print_stats: to stderr: counts and percentages of world/system/installed pkgs after filter_world runs.
 function print_stats() {
 	n=$(wc -l <$temp_dir/newworld)
 	world=$(wc -l <$temp_dir/oldworld)
@@ -4046,6 +4186,7 @@ function print_stats() {
 	) >&2
 }
 	
+# ask_install_new_file: if old/new differ, prompt Install/Skip/Diff/Merge (or honor --pretend/--ask/--force) and install_new_file.
 function ask_install_new_file() {
 	local old="$1" new="$2" target="$3" name="$4"
 	local merged="$temp_dir/merged-${old//\//_}"
@@ -4075,6 +4216,7 @@ function ask_install_new_file() {
 # === inspect_overlay_best_in_slot_arches, inspect_overlay, overlay_clean.
 # ============================================================================
 
+# inspect_patch_tree_check_data_is_highest_patched: populate mlsrs/mlsr_trees/mlsr_slots/mlsr_pmask/mlsr_match arrays for cp by matching dn against avail ebuilds.
 function inspect_patch_tree_check_data_is_highest_patched() {
 	while read _mlsr mlsr_tree; do
 		mlsr=$_mlsr
@@ -4102,6 +4244,7 @@ function inspect_patch_tree_check_data_is_highest_patched() {
 	done <<<"$(avail_versions "$cp" yes | mlsr_sort)"
 }
 
+# inspect_patch_tree_check_slots: true if any mlsr in the populated arrays is best-in-slot under given arches/pmask/portdir-only constraints.
 function inspect_patch_tree_check_slots() {
 	local arches=$1 excl_pmask=$2 pd_only=$3
 	local patch_used="" oldslot; unset oldslot
@@ -4118,6 +4261,7 @@ function inspect_patch_tree_check_slots() {
 	[[ "$patch_used" ]]
 }
 
+# inspect_patch_tree_check_arches: iterate /profiles/arch.list and return on first arch where _check_slots passes (stable then ~arch).
 function inspect_patch_tree_check_arches() {
 	local pd_only=$1
 	for arch in $(< $PORTDIR/profiles/arch.list); do
@@ -4127,6 +4271,7 @@ function inspect_patch_tree_check_arches() {
 	done
 }
 
+# inspect_patch_tree: walk an /etc/portage/patches-style tree; echo svn/git/rm commands for patchdirs whose target is gone.
 function inspect_patch_tree() {
 	local tree="$1" rm_command rmdir_command patchdir patches
 	if [[ -d "$tree/.svn" ]]; then
@@ -4174,6 +4319,7 @@ function inspect_patch_tree() {
 	done
 }
 
+# inspect_overlay_best_in_slot: true if overlay's mlsr is >= every PORTDIR mlsr in the same slot (with optional arch/pmask filters).
 function inspect_overlay_best_in_slot() {
 	local arch=$1 cp=$2 overlay_mlsr=$3 overlay_slot=$4 excl_pmask=$5
 	if [[ "$arch" ]]; then
@@ -4190,6 +4336,7 @@ function inspect_overlay_best_in_slot() {
 	return 0
 }
 
+# inspect_overlay_best_in_slot_arches: iterate /profiles/arch.list and return on first arch where _best_in_slot passes (stable then ~arch).
 function inspect_overlay_best_in_slot_arches() {
 	for arch in $(< $PORTDIR/profiles/arch.list); do
 		inspect_overlay_best_in_slot "$arch" "$@" "yes" && break
@@ -4198,6 +4345,7 @@ function inspect_overlay_best_in_slot_arches() {
 	done
 }
 
+# inspect_overlay: walk overlay $1's cat/pkg dirs; echo rm/manifest commands for ebuilds superseded in PORTDIR.
 function inspect_overlay() {
 	local overlay="${1%/}"
 	for ebdir in "$overlay"/*/*; do
@@ -4264,6 +4412,7 @@ function inspect_overlay() {
 	done
 }
 
+# overlay_clean: --overlay-clean: dispatch each arg to inspect_patch_tree or inspect_overlay; default to first non-PORTDIR repo.
 function overlay_clean() {
 	if (( $# )); then
 		for overlay in "$@"; do
@@ -4298,6 +4447,7 @@ function overlay_clean() {
 # === filter_etc_portage based on the parsed flag set.
 # ============================================================================
 
+# main: entry point: probe paths, load Portage config if needed, dispatch on do_arg_action to filter/redundant/info/etc.
 function main() {
 	# All real actions need the install-prefix paths, even owners (which
 	# otherwise skips load_portage_config to save the heavier setup).
