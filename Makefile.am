@@ -118,3 +118,13 @@ smoke-diff:
 #   make ebuild OVERLAY_DIR=/var/db/repos/<your-overlay>/app-portage/udept
 ebuild:
 	$(MAKE) -C packaging ebuild
+
+# 'make toc' prints the topical section index from src/dep.in.  Each
+# section is a banner whose name line starts with `# === ` and is
+# preceded by a `# ==========...` fence (the fence disambiguates from
+# inline `# === ` continuation lines inside a banner body).
+.PHONY: toc
+toc:
+	@awk '/^# =====/ {f=1; next} \
+	      f && /^# === [A-Za-z]/ {printf "  %4d  %s\n", NR, substr($$0, 7); f=0; next} \
+	      {f=0}' $(srcdir)/src/dep.in

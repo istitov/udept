@@ -8,6 +8,14 @@
 # It is believed all code copyright gentoo.org has been replaced by my own
 # (better) algorithms. :P
 
+# ============================================================================
+# === PRELUDE & PATH CONSTANTS
+# === PROG/VERSION/TAG vars, bash 4.2+ runtime check, shopt extglob, default
+# === path constants (EPREFIX/EROOT/VARDB_DIR/EDB_DIR/PORTAGE_LIB_DIR/...).
+# === resolve_eroot_paths() below reruns these assignments after probing
+# === portageq, for Gentoo Prefix and chroot layouts.
+# ============================================================================
+
 PROG="dep"
 SYNOPSIS="an inappropriate Portage engine"
 VERSION="@PACKAGE_VERSION@"
@@ -52,6 +60,12 @@ ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
 
 # Called from main() after the help/version/usage short-circuit so a
 # trivial 'dep --version' doesn't pay portageq's ~150ms startup.
+# ============================================================================
+# === EROOT RESOLUTION
+# === resolve_eroot_paths — called from main() after the help/version/usage
+# === short-circuit so trivial 'dep --version' doesn't pay portageq's startup.
+# ============================================================================
+
 function resolve_eroot_paths() {
 	# Fast path for the standard /-rooted layout — the defaults at the
 	# top of the script are already correct, and we save a portageq
@@ -76,6 +90,16 @@ function resolve_eroot_paths() {
 	WORLD_SETS_FILE="${PORTAGE_LIB_DIR}/world_sets"
 	ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
 }
+
+# ============================================================================
+# === HELP / USAGE / ARG DECLARATION
+# === help_fmt, fmt_w, print_version, print_usage, shopt_help, print_help,
+# === arg, handle_arg_action, handle_arg_info, handle_arg_opt — plus the 42
+# === source-time `arg ...` invocations between arg() and handle_arg_action
+# === that populate the option tables driving --help, the man page, and
+# === bash + zsh completions (same arrays dumped into completion/_dep).
+# === Adding a flag = one new `arg ...` line in that block.
+# ============================================================================
 
 function help_fmt() {
 	PLUSMINUS="$(iconv -c -f UTF-8 <<<$'\xc2\xb1')" || PLUSMINUS="+-"
@@ -357,6 +381,13 @@ function handle_arg_opt() {
 }
 
 optargs=("$@")
+# ============================================================================
+# === ARGV PARSER
+# === args=() and the optargs case-loop translating user-supplied argv into
+# === do_arg_action / do_arg_info / args[] state for main() to dispatch on.
+# === Source-time block (runs on every `dep` invocation).
+# ============================================================================
+
 args=()
 (( ${#optargs[@]} == 0 )) && do_arg_action="usage" || do_arg_action=""
 for ((i=0; i<${#optargs[@]}; ++i)); do case "${optargs[$i]}" in
@@ -483,6 +514,11 @@ fi
 	usage) print_usage | help_fmt; exit;;
 esac
 
+# ============================================================================
+# === HTML & STACK UTILS
+# === html_wrap, stacking_sort, kill_comments_and_blanks.
+# ============================================================================
+
 function html_wrap() {
 	cat <<END
 <html>
@@ -590,6 +626,12 @@ function kill_comments_and_blanks() {
 # expansion when testing for file existence. This is damn annoying, as we
 # often want to test for the existence of foo* and don't care whether there
 # are 1 or 100 files that match that wildcard.
+# ============================================================================
+# === LIST & STRING UTILS
+# === car, cdr, abl, has, pads, pad, rpad, set_xterm_title, format_error,
+# === log_message, memoise, backtrace.
+# ============================================================================
+
 function car() { echo "$1"; }
 function cdr() { echo "${@:2}"; }
 function abl() { echo "${@:1:$(($#-1))}"; }
@@ -680,6 +722,12 @@ function backtrace() {
 # e.g. 3.57.2.20030722c_beta37-r12
 VER_SHPAT='?(cvs.)*(+([[:digit:]]).)+([[:digit:]])?([[:lower:]])*(_@(alpha|beta|pre|rc|p)*([[:digit:]]))?(-r+([[:digit:]]))'
 VER_REGEXP='\(cvs\.\)\?\([[:digit:]]\+\.\)*[[:digit:]]\+[[:lower:]]\?\(_\(alpha\|beta\|pre\|rc\|p\)[[:digit:]]*\)*\(-r[[:digit:]]\+\)\?'
+
+# ============================================================================
+# === CPV / ATOM FORMATTING
+# === format_cpv, format_atom_for_emerge, format_taint, format_depatom,
+# === format_revdep.
+# ============================================================================
 
 function format_cpv() {
 	cpv="$1"; cat="${cpv%/*}"; pv="${cpv#$cat/}"; pn="${pv/%-$VER_SHPAT}"
@@ -829,6 +877,12 @@ for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 # handles multiple inheritance - probably pointless
 # Modern parent files may also reference another repository's profile via
 # `<repo-name>:<profile-path>` (path relative to that repo's profiles/ dir).
+# ============================================================================
+# === PROFILE & PORTAGE CONFIG
+# === profile_stack_read, profile_files, etc_portage_files, profile_files_extra,
+# === read_repos_config, load_portage_config.
+# ============================================================================
+
 function profile_stack_read() {
 	dir="$1"; shift
 	for rel in "$@"; do
@@ -970,6 +1024,12 @@ function load_portage_config() {
 # functions and the populate_from_tree helper were removed in phase 2.
 # /usr/lib/portage/bin/ebuild.sh has moved into the python sub-tree and we no
 # longer regenerate cache files on demand — Portage already maintains them.
+
+# ============================================================================
+# === VERSION COMPARISON + DEP MATCH
+# === vercmp, dep_satisfies_mlsr, dep_satisfies, slot_satisfies,
+# === dep_satisfies_slot, accept_for.
+# ============================================================================
 
 function vercmp() {
 	comm_ver "$1" "$3"
@@ -1124,6 +1184,11 @@ function accept_for() {
 	read -a "$return" <<<"${accept_ks[@]}"
 }
 
+# ============================================================================
+# === TREE LOOKUP
+# === best_tree, edb_tree.
+# ============================================================================
+
 function best_tree() {
 	cpv="$1"
 	cp="${cpv/%-$VER_SHPAT}"; mlsr="${cpv#$cp-}"; pv="${cpv#*/}"
@@ -1168,6 +1233,13 @@ function edb_tree() {
 # from a whitespace-separated IUSE list read on stdin. Hyphens inside flag names
 # (e.g. native-extensions) are preserved — only prefixes after a word boundary
 # are stripped.
+# ============================================================================
+# === VARDB / EDB METADATA + USE
+# === strip_iuse_prefixes, extract_var_from_vardb, extract_var_from_edb,
+# === extract_var, keywords_for, slot_for, pkginternal_use_for, dep_to_cps,
+# === allvirtuals, autouse, package_use_mask, usecomponent, dbuse.
+# ============================================================================
+
 function strip_iuse_prefixes() {
 	sed 's/[[:space:]]\+[+-]/ /g; s/^[+-]//'
 }
@@ -1396,6 +1468,12 @@ function dbuse() {
 # Compare two numbers as fractional parts of a decimal fraction.
 # Returns negative-as-mod-256 (see comm_ver below for the convention).
 # shellcheck disable=SC2151
+# ============================================================================
+# === COMM — signed-magnitude version compare
+# === comm_float, comm_ver.  See ChangeLog 0.7.1 / 0.7.2 for the cumulative
+# === bug haul against this code (s1_s typo, rc-suffix ordering, 1.0-vs-1.0-r0).
+# ============================================================================
+
 function comm_float() {
 	local f1="$1" f2="$2" i d1 d2
 	for ((i=0;i<${#f1}||i<${#f2};++i)); do
@@ -1522,6 +1600,12 @@ function comm_ver() {
 	exit 128	# should not reach here
 }
 
+# ============================================================================
+# === MLSR SORTING + PACKAGE LOOKUPS
+# === highest_mlsr, method_sort, is_ver_higher, mlsr_sort, has_version,
+# === virtuals_from, virtual_version.
+# ============================================================================
+
 function highest_mlsr() {
 	local highest=""
 	local mlsr
@@ -1628,6 +1712,11 @@ function virtual_version() {
 }
 
 # XXX outputs stonkingly big and dense graphs -- need a way to trim them down
+# ============================================================================
+# === DEPENDENCY GRAPH (dot output)
+# === dot_depgraph — emits Graphviz .dot for visualisation of dep trees.
+# ============================================================================
+
 function dot_depgraph() {
 	local -a handled=() queue=()
 	if [[ "$1" == @(""|world|system) ]]; then
@@ -1693,6 +1782,17 @@ function dot_depgraph() {
 	echo "	}"
 	echo "}"
 }
+
+# ============================================================================
+# === SMARTDEP / DEP EVALUATION
+# === has_revdepend, add_deps_to_required, makeideal, raw_depends,
+# === crunch_depends, cd_evaluate_single, cd_discard_single,
+# === cd_already_installed, cd_satisfiable, cd_is_in_use, resdepend,
+# === world_sets_expand, _world_sets_expand_one, db_grep, potential_revdepends,
+# === info_action_rev-depends, _smartdep, _smartdep_nopv, provided_and_avail,
+# === pv_to_cpv, _resolve_depatom_inner_virtual, _resolve_depatom_inner,
+# === resolve_depatom.
+# ============================================================================
 
 function has_revdepend() {
 	# TODO FIXME make more efficient
@@ -2281,6 +2381,12 @@ function resolve_depatom() {
 }
 memoise resolve_depatom
 
+# ============================================================================
+# === MASK / KEYWORD
+# === is_in_maskfile, is_inclusion_masked, is_package_masked,
+# === is_package_unmasked, get_mask_comment, keyword_sym, is_keyword_masked.
+# ============================================================================
+
 function is_in_maskfile() {
 	local cp="$1"; local mlsr="$2"; shift 2
 	kill_comments_and_blanks "$@" 2>/dev/null | grep "$cp" | stacking_sort yes \
@@ -2405,6 +2511,13 @@ function is_keyword_masked() {
 	return 0
 }
 
+# ============================================================================
+# === PACKAGE INVENTORY
+# === avail_versions, provided_mlsrs, injected_mlsrs, installed_mlsrs,
+# === all_installed_cpvs, all_installed_cp_mlsrs, is_running_kernel,
+# === not_in_tree.
+# ============================================================================
+
 function avail_versions() {
 	local cp="$1" showtree="$2" _unused="$3"
 	local excl_pmask="$4" excl_kmask="$5"
@@ -2501,6 +2614,14 @@ END
 		: # no ebuilds for this package in trees - perhaps a g-cpan.pl
 	fi
 }
+
+# ============================================================================
+# === INFO ACTIONS — TREE-DEPENDS / DEPENDS / EXISTS
+# === rtnode, info_action_tree-depends, info_action_reverse-tree,
+# === print_depstring, info_action_depstrings, info_action_depends,
+# === info_action_exists, info_action_rev-exists, redundant_of_all_cp_mlsrs,
+# === redundant.
+# ============================================================================
 
 function rtnode() {
 	local node="$1" noworld="$2" forcircular="$3" ordeps="$4"
@@ -2675,6 +2796,14 @@ function redundant() {
 		redundant_of_all_cp_mlsrs $cp $mlsr $more_mlsrs
 	done
 }
+
+# ============================================================================
+# === INFO ACTIONS — METADATA / USE / IUSE / KEYWORDS / VERSIONS
+# === info_action_changelog, use_desc, info_action_usedesc, info_action_iuse,
+# === eval_ru_list, eval_ru_expr, info_action_required-use, metadata_extract,
+# === info_action_info, sort_trees, mlsr_trees_sorted, info_action_keywords,
+# === info_action_versions.
+# ============================================================================
 
 function info_action_changelog() {
 	local cpv="$1"
@@ -3113,6 +3242,15 @@ function info_action_versions() {
 	done
 }
 
+# ============================================================================
+# === INFO ACTIONS — SIZE / CONTENTS / OWNERS / SEARCH
+# === format_bytes, info_action_size, pkgsize_arg, pkgsize_summary,
+# === formatcontentsentry, info_action_contents, canonicalize_path,
+# === info_action_owners, info_action_owners_match, info_action_category,
+# === info_action_catpackages, info_action_virtuals, info_action_provides,
+# === star_arg, info_action_search.
+# ============================================================================
+
 function format_bytes() {
 	bytes=$1
 	units=( bytes KiB MiB GiB TiB PiB )
@@ -3406,6 +3544,11 @@ function info_action_search() {
 	trap - SIGPIPE
 }
 
+# ============================================================================
+# === ARG EXPANSION + USER QUERY
+# === expand_arg, argv_dep, lower, upper, userquery.
+# ============================================================================
+
 function expand_arg() {
 	arg="$1"
 	if [[ "${shopt_type[${do_info_shopt_idx}]}" != *@(PNAME|PACKAGE|VIRTUAL)* ]]; then
@@ -3519,6 +3662,14 @@ function userquery() {
 	done
 	trap - INT
 }
+
+# ============================================================================
+# === ETC/PORTAGE FILTERS  (depclean output processing)
+# === install_new_file, filter_world, filter_etc_file, package_star_filter,
+# === package_use_filter, package_mask_filter_inner, package_mask_filter,
+# === package_unmask_filter, package_keywords_filter, profile_packages_filter,
+# === bashrc_filter, filter_etc_portage, print_stats, ask_install_new_file.
+# ============================================================================
 
 function install_new_file() {
 	local new="$1" target="$2"
@@ -3916,6 +4067,14 @@ function ask_install_new_file() {
 	esac
 }
 
+# ============================================================================
+# === INSPECT — PATCH-TREE / OVERLAY
+# === inspect_patch_tree_check_data_is_highest_patched,
+# === inspect_patch_tree_check_slots, inspect_patch_tree_check_arches,
+# === inspect_patch_tree, inspect_overlay_best_in_slot,
+# === inspect_overlay_best_in_slot_arches, inspect_overlay, overlay_clean.
+# ============================================================================
+
 function inspect_patch_tree_check_data_is_highest_patched() {
 	while read _mlsr mlsr_tree; do
 		mlsr=$_mlsr
@@ -4131,6 +4290,13 @@ function overlay_clean() {
 		return 1
 	fi
 }
+
+# ============================================================================
+# === MAIN
+# === main — the dispatch entry point.  Parses argv, runs resolve_eroot_paths
+# === post help/version short-circuit, dispatches to info_action_* / action_* /
+# === filter_etc_portage based on the parsed flag set.
+# ============================================================================
 
 function main() {
 	# All real actions need the install-prefix paths, even owners (which
