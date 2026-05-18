@@ -4,6 +4,7 @@ EXTRA_DIST = \
 	.editorconfig \
 	.shellcheckrc \
 	CONTRIBUTING.md \
+	SECURITY.md \
 	tests/smoke.sh \
 	tests/smoke-diff.sh \
 	tests/unit/test_helper.bash \
