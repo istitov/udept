@@ -334,7 +334,7 @@ function handle_arg_action() {
 	esac
 }
 
-# handle_arg_info: argv-parser callback for info flags; also harvests --changelog/-j NUMBER into changelog_entries.
+# handle_arg_info: argv-parser callback for info flags; also harvests --changelog/-j NUMBER into changelog_entries and --size/-z into do_package_sizes.
 function handle_arg_info() {
 	case "$1" in
 		"--size" | "-z" ) 
@@ -941,7 +941,7 @@ function profile_files() {
 	done <<<"$profile_stack"
 }
 
-# etc_portage_files: emit readable file(s) at /etc/portage/$1, expanding directory into a find -type f.
+# etc_portage_files: emit readable file(s) at $ETC_PORTAGE_DIR/$1 (Prefix-aware), expanding directory into a find -type f.
 function etc_portage_files() {
 	name="$1"
 	if [[ -d "$ETC_PORTAGE_DIR/$name" ]]; then
@@ -1077,7 +1077,7 @@ function vercmp() {
 	esac
 }
 
-# dep_satisfies_mlsr: test whether installed mlsr $1 satisfies operator $2 + dep-mlsr $3 (handles star-glob and '').
+# dep_satisfies_mlsr: test whether candidate mlsr $1 (any source: installed/available/injected) satisfies operator $2 + dep-mlsr $3 (handles star-glob and '').
 function dep_satisfies_mlsr() {
 	local t_mlsr="$1"; local vs="$2"; local d_mlsr="$3"
 	[[ "$vs" == @(<|>)* ]] && d_mlsr="${d_mlsr%\*}"  # >=foo-2* idiocy
@@ -1448,7 +1448,7 @@ function package_use_mask() {
 	) | stacking_sort yes
 }
 
-# usecomponent: echo USE flags contributed by one component ($1 in env/pkg/conf/auto/pkginternal/env.d/...) for cpv $2.
+# usecomponent: echo USE flags contributed by one component ($1 in env/pkg/conf/auto/pkginternal/env.d; placeholder no-op for pkgprofile/defaults/features/repo) for cpv $2.
 function usecomponent() {
 	# return a USE component, one flag per line, highest priority first
 	# TODO FIXME not correct yet - though OK for default case
@@ -1487,7 +1487,7 @@ function usecomponent() {
 	esac
 }
 
-# dbuse: echo effective USE flags for cpv $1: walks USE_ORDER components, applies package.use.mask, expands USE_EXPAND.
+# dbuse: echo effective USE flags for cpv $1: walks USE_ORDER components, applies package.use.mask, expands USE_EXPAND; short-circuits to verbatim VARDB_DIR/$cpv/USE when --original-depends and the vardb dir exists.
 function dbuse() {
 	local cpv=$1
 	if [[ "$cpv" && "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
@@ -2156,7 +2156,7 @@ function _world_sets_expand_one() {
 }
 memoise world_sets_expand
 
-# db_grep: find installed-or-available packages whose *DEPEND text contains regex $1; optionally include tree path.
+# db_grep: scan packages for needle $1 in vardb attribute $attr ($3); mode-dependent — --original-depends finds files literally named $attr, --uninstalled greps md5-cache for any field, default greps the named vardb attribute file ($attr="*DEPEND" expands to DEPEND/RDEPEND/BDEPEND/IDEPEND/PDEPEND).
 function db_grep() {
 	local needle="$1" with_tree="$2" attr="$3" tree cpv
 	if [[ "$opt_arg_original_depends" ]]; then
@@ -2182,9 +2182,23 @@ function db_grep() {
 		# Default: only installed packages. Grep their per-attribute vardb
 		# files directly — vardb dep files reflect what the package was
 		# actually installed with, which is the right answer for revdep.
+		#
+		# $attr selects which vardb file(s) to scan.  The pseudo-name
+		# "*DEPEND" expands to the five dep variants (DEPEND, RDEPEND,
+		# BDEPEND, IDEPEND, PDEPEND) — that's what potential_revdepends
+		# wants.  Any other value (e.g. "IUSE", "KEYWORDS") matches that
+		# vardb attribute literally, which is what info_action_iuse and
+		# similar attribute-scoped callers want.  Empty $attr falls back
+		# to the *DEPEND set so legacy two-arg callers behave as before.
+		local find_names
+		if [[ -z "$attr" || "$attr" == '*DEPEND' ]]; then
+			find_names=( '(' -name DEPEND -o -name RDEPEND -o -name BDEPEND \
+				-o -name IDEPEND -o -name PDEPEND ')' )
+		else
+			find_names=( -name "$attr" )
+		fi
 		find ${VARDB_DIR} -mindepth 3 -maxdepth 3 \
-			\( -name DEPEND -o -name RDEPEND -o -name BDEPEND \
-			   -o -name IDEPEND -o -name PDEPEND \) \
+			"${find_names[@]}" \
 			-exec grep -l "${needle}" {} + 2>/dev/null \
 		| sed -n "s!^${VARDB_DIR}/\\([^/]*/[^/]*\\)/.*!\\1!p" \
 		| sort -u \
@@ -2379,7 +2393,7 @@ function _smartdep_nopv () {
 	trap - SIGPIPE
 }
 
-# provided_and_avail: echo installed mlsrs of cp $1 (highest first), then available mlsrs unless installed-only ($2).
+# provided_and_avail: echo injected+installed mlsrs of cp $1 via provided_mlsrs (highest first), then available mlsrs unless installed-only ($2).
 function provided_and_avail() {
 	trap return SIGPIPE
 	provided_mlsrs "$1" | mlsr_sort | tac
@@ -2472,7 +2486,7 @@ function is_in_maskfile() {
 	done || return 0; return 1
 }
 
-# is_inclusion_masked: true if profile 'packages' file *include* atom doesn't accept cp/mlsr — i.e. excluded from inclusion-mask.
+# is_inclusion_masked: true if cp has an include-atom in profile 'packages' but no include-atom matches this specific mlsr (i.e. mlsr is excluded from the inclusion set).
 function is_inclusion_masked() {
 	local cp="$1" mlsr="$2"
 	grep "$cp" <<<"${allprofilepackages}" \
@@ -2792,7 +2806,7 @@ function print_depstring() {
 	esac; done
 }
 
-# info_action_depstrings: --depstrings: print_depstring for each of DEPEND/BDEPEND/RDEPEND/PDEPEND/IDEPEND.
+# info_action_depstrings: --depstrings: print_depstring for RDEPEND/PDEPEND/IDEPEND; DEPEND+BDEPEND added when $opt_arg_build_time.
 function info_action_depstrings() {
 	set_xterm_title "Displaying raw dependencies of $1"
 	local cpv="$1"
@@ -2938,7 +2952,7 @@ s| \([[:graph:]]\+\)\([,:]\)| '"$Cy"'\1'"$NO"'\2|g
 '
 }
 
-# use_desc: echo localised description for USE flag $1 in cpv $2 by scraping use.desc + use.local.desc.
+# use_desc: echo package-local description for USE flag $1 in cpv $2 (use.local.desc with use.desc fallback).
 function use_desc() {
 	local flag="$1" cpv="$2"
 	sed -e 's!^\('${cpv%-$VER_SHPAT}':\)\?'$flag' - !!;t;d' \
@@ -3145,7 +3159,7 @@ function metadata_extract() {
 		$tree/$cp/metadata.xml
 }
 
-# info_action_info: --info: print metadata block for cpv $1 (URLs, license, INHERITED, ebuild path, herd/email, patches, logs).
+# info_action_info: --info: print metadata block for cpv $1 (URLs, DESCRIPTION, RESTRICT, license, INHERITED, ebuild path, herd/email, patches, logs).
 function info_action_info() {
 	set_xterm_title "Displaying information for $1"
 	local cpv="$1"; local cp=${cpv%-$VER_SHPAT} pv=${cpv#*/}
@@ -3500,7 +3514,7 @@ function info_action_owners() {
 	[[ "$result" ]] && printf '%s\n' "$result"
 }
 
-# info_action_owners_match: grep all CONTENTS for path $1; emit owning cpvs (with file detail in non-emerge mode).
+# info_action_owners_match: grep all CONTENTS for path $1; emit owning cpvs (with file detail when $1 is not an absolute path).
 function info_action_owners_match() {
 	local path="$1"
 	# Escape characters with meaning in basic regex so a path containing
@@ -4070,7 +4084,7 @@ function package_keywords_filter() {
 	[[ "${used_args[*]}" ]]
 }
 
-# profile_packages_filter: profile/packages line keepable iff its '-X' removal isn't already on stack (or '+X' isn't already on stack).
+# profile_packages_filter: profile/packages line keepable iff its '-X' removal still has an effect (X is on stack) or its '+X' addition still has an effect (X is NOT on stack).
 function profile_packages_filter() {
 	local pline="$1"
 	if [[ "$pline" == -* ]]; then
@@ -4150,7 +4164,7 @@ function bashrc_filter() {
 	return 0
 }
 
-# filter_etc_portage: --filter-etc-portage: run package.use / package.mask / package.unmask / package.accept_keywords / profile/packages / bashrc.
+# filter_etc_portage: --filter-etc-portage: run package.use / package.mask / package.unmask / package.accept_keywords / package.keywords (legacy) / profile/packages / bashrc.
 function filter_etc_portage() {
 	filter_etc_file package.use package_star_filter package_use_filter yes "all use flags redundant"
 	filter_etc_file package.mask package_mask_filter
@@ -4271,7 +4285,7 @@ function inspect_patch_tree_check_arches() {
 	done
 }
 
-# inspect_patch_tree: walk an /etc/portage/patches-style tree; echo svn/git/rm commands for patchdirs whose target is gone.
+# inspect_patch_tree: walk an /etc/portage/patches-style tree; echo svn/git/rm commands for patchdirs that are empty, have no matching ebuild, or whose match is no longer best-in-slot.
 function inspect_patch_tree() {
 	local tree="$1" rm_command rmdir_command patchdir patches
 	if [[ -d "$tree/.svn" ]]; then
