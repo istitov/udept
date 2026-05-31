@@ -1,5 +1,5 @@
-AC_INIT(udept, 0.7.2)
-AC_SUBST(PACKAGE_TAG, ["The Linter Was Right"])
+AC_INIT(udept, 0.7.3)
+AC_SUBST(PACKAGE_TAG, ["Truth in Advertising"])
 AM_INIT_AUTOMAKE([dist-xz no-dist-gzip foreign])
 
 AC_ARG_ENABLE(bash-completion, AS_HELP_STRING([--disable-bash-completion],

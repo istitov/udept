@@ -1,3 +1,72 @@
+0.7.3 "Truth in Advertising" (20260531)
+
+	Twin patch release with portconf 2.0.1.  The headline fixes are
+	one stdin-clobbered prompt class (in portconf) and one mis-scoped
+	vardb scan (in udept's db_grep); both surfaced through a critical
+	re-read of the recently-added one-line docstrings and section
+	banners.
+
+	* fix: src/dep — db_grep's default branch (active when neither
+	  --original-depends nor --uninstalled is set) hardcoded the
+	  *DEPEND file set and ignored $attr.  potential_revdepends
+	  calls it with attr='*DEPEND' so that worked; info_action_iuse
+	  calls it with attr=IUSE expecting an IUSE-scoped scan and
+	  silently got a *DEPEND-scoped one instead.  The follow-up
+	  `has $1 $(extract_var IUSE …)` filter trims false positives
+	  but not false negatives — packages whose USE flag is in IUSE
+	  but doesn't affect deps were silently missed by `dep -U
+	  <flag>`.  $attr is now honoured: pseudo-name "*DEPEND"
+	  expands to the five dep variants so potential_revdepends
+	  behaviour is preserved; empty $attr falls back to the same
+	  expansion.  Commit baa8baf.
+	* tests: tests/unit/db_grep.bats — 5 new tests pinning attr-
+	  honouring behaviour, including the false-negative case that
+	  motivated the fix.
+
+	Post-audit accuracy pass on docstrings (comment-only, behaviour
+	unchanged):
+
+	* src/dep: 13 docstrings corrected for factual drift.  No
+	  inversions or completely-wrong descriptions were found —
+	  the failure mode here is omission (missing branch, missing
+	  flag, missing fallback) rather than the direction-inversions
+	  the parallel portconf audit surfaced.  Affected functions
+	  include provided_and_avail (was "installed mlsrs"; actually
+	  injected+installed), info_action_depstrings (default omits
+	  DEPEND/BDEPEND unless --build-time), info_action_info (omitted
+	  RESTRICT + DESCRIPTION), filter_etc_portage (omitted legacy
+	  package.keywords), etc_portage_files (hardcoded "/etc/portage";
+	  actually Prefix-aware), and others.
+
+	Pre-existing 0.7.3-seed commits already on origin/main:
+
+	* fix: env.d USE-resolution silent on missing profile.env;
+	  smoke tests now stage3-tolerant.  Commit 355136a.
+	* fix: zsh completion — `_dep "$@"` emitted AFTER the option-
+	  table dump so first-invocation completion actually fires.
+	  Commit df64644.
+	* ci: functional-completion check — autoload + invoke +
+	  flag-count drift detection.  Commit e347274.
+	* src/dep: 24 topical section banners + `make toc` target
+	  + CONTRIBUTING.md "Source layout" note.  Commit ac7efc9.
+	* src/dep: one-line docstrings above every function (~150).
+	  The ones the re-read flagged as drifty are corrected in
+	  baa8baf above.  Commit c9447aa.
+	* tests/smoke: `-L` rev-depends tests 17 + 18 + 21 now accept
+	  exit 124 from /usr/bin/timeout alongside 0 — populated
+	  maintainer systems exceed the 120s cap; CI stage3 doesn't.
+	  Commit e0c2a1e.
+	* docs: SECURITY.md disclosure policy (5 sections: supported
+	  versions, PVR reporting, in-scope, out-of-scope, disclosure).
+	  Commit e267647.
+	* docs: README — latest-release shields.io badge next to CI.
+	  Commit 3af6011.
+
+	Build:
+
+	* configure.ac: AC_INIT 0.7.2 → 0.7.3, PACKAGE_TAG
+	  "The Linter Was Right" → "Truth in Advertising".
+
 0.7.2 "The Linter Was Right" (20260516)
 
 	* fix: comm_ver rc-suffix mis-ordering (commit d721e8e). The

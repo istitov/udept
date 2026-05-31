@@ -303,6 +303,7 @@ EXTRA_DIST = \
 	tests/unit/smoke_diff.bats \
 	tests/unit/comm_ver.bats \
 	tests/unit/usecomponent.bats \
+	tests/unit/db_grep.bats \
 	tests/smoke/test_helper.bash \
 	tests/smoke/help.bats \
 	tests/smoke/info_actions.bats \
