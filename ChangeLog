@@ -1,3 +1,49 @@
+0.7.4 "Mind the EROOT" (20260604)
+
+	Patch release.  Four fixes to the config-file apply pipeline
+	(`dep -E` / `dep -w`), all variations on one theme: honour the
+	target environment instead of a hardcoded path, the system root,
+	or a stale assumption.  Surfaced by a sandbox-isolated re-run of
+	the mutating actions against a non-root, non-`/` EROOT.
+
+	* fix: src/dep — ask_install_new_file's `pretend` case called
+	  `exit 0` instead of `return 0`.  Under `dep -E --pretend` the
+	  first config file with redundant entries ended the entire
+	  filter_etc_portage walk, so every later file (package.mask,
+	  package.accept_keywords, …) was silently never previewed.  It
+	  now returns and the walk continues.  Fires only when a file
+	  actually has redundant entries — the upstream `diff -q && return`
+	  guard means a clean tree never reached it, which is why it went
+	  unnoticed.
+	* fix: src/dep — filter_world passed a hardcoded
+	  /var/lib/portage/world as the install target instead of
+	  $WORLD_FILE.  On a Prefix / non-default EROOT install, `dep -w`
+	  in apply mode would rewrite the host's real world file rather
+	  than the configured one.  It now uses $WORLD_FILE, and the
+	  filter_world prose is EROOT-aware.
+	* fix: src/dep — install_new_file always escalated (doas/sudo/su)
+	  when non-root, even when the target was already the caller's to
+	  write (an existing writable file, or a new file in a writable
+	  directory).  This produced spurious privilege prompts and
+	  root-owned files when dep runs against a user-owned tree (a
+	  non-root EROOT, a test sandbox).  It now writes directly when
+	  the target is writable and escalates only when it genuinely
+	  isn't.
+	* fix: src/dep — filter_etc_file did not clear a pending comment
+	  block when the entry it introduced was dropped, so the dropped
+	  entry's comment migrated onto the next kept entry (when no blank
+	  line separated them).  The comment is now discarded together
+	  with the entry it introduced.
+	* tests: 7 new unit tests (250 → 257) pin all four fixes
+	  (tests/unit/ask_install_new_file.bats, filter_world.bats,
+	  install_new_file.bats, filter_etc_file.bats), each verified
+	  load-bearing by running it against the pre-fix code.  The three
+	  apply-path fixes were additionally validated end-to-end against
+	  a writable sandbox, with the live tree confirmed byte-identical
+	  afterward.
+
+	AI-assist disclosure as for 0.7.1.
+
 0.7.3 "Truth in Advertising" (20260531)
 
 	Twin patch release with portconf 2.0.1.  The headline fixes are

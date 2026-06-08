@@ -119,6 +119,27 @@ no longer aborts the script (an equality check now handles the
 case where both revisions normalise to empty). 236 unit tests
 (5 new) pin both fixes. AI-assist disclosure as for 0.7.1.
 
+The **0.7.3** release (2026), "Truth in Advertising", is a twin patch
+release with portconf 2.0.1. Its headline fix is a mis-scoped vardb
+scan: `db_grep`'s default branch ignored its `$attr` argument and
+always scanned the `*DEPEND` file set, so `dep -U <flag>` (which expects
+an IUSE-scoped scan) silently missed packages whose USE flag is in
+`IUSE` but doesn't affect dependencies. A post-audit accuracy pass also
+corrected 13 docstrings for factual drift (omissions, not inversions).
+5 new `db_grep` unit tests. AI-assist disclosure as for 0.7.1.
+
+The **0.7.4** release (2026), "Mind the EROOT", fixes four bugs in the
+config-file apply pipeline (`dep -E` / `dep -w`), all variations on one
+theme — honour the target environment rather than a hardcoded path or
+the system root. `--pretend` no longer aborts the file walk at the
+first changed file; the world file follows `$WORLD_FILE` / `EROOT`
+instead of a hardcoded `/var/lib/portage/world`; a writable target is
+written directly instead of needlessly escalating to doas/sudo; and a
+dropped entry's comment no longer migrates onto the next kept line.
+7 new unit tests (250 → 257) pin the fixes, and the three apply-path
+fixes were additionally validated end-to-end against a writable
+sandbox. AI-assist disclosure as for 0.7.1.
+
 See `ChangeLog` for the full per-release history.
 
 ## Other known repositories
@@ -142,6 +163,7 @@ See `ChangeLog` for the full per-release history.
 Standard autotools:
 
 ```sh
+autoreconf -i            # configure is generated, not tracked
 ./configure              # --disable-{bash,zsh}-completion to skip either
 make
 sudo make install
@@ -151,8 +173,10 @@ sudo make install
 bash-completion script. The man page is generated from the option tables
 in `src/dep.in` at build time, so it is always in sync with `dep --help`.
 
-To regenerate `configure` and `Makefile.in` after editing `configure.ac`
-or `Makefile.am`, run `autoreconf -i`.
+`configure` and the `Makefile.in` set are generated, not tracked in git,
+so `autoreconf -i` is required after a fresh clone (and after editing
+`configure.ac` / `Makefile.am`). A release tarball ships them already, so
+building from the tarball can skip that step.
 
 ## Quick examples
 
