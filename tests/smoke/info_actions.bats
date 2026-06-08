@@ -77,9 +77,10 @@ setup() {
 	# systems this can exceed the 120s cap. CI's stage3 has few
 	# revdeps so this completes well under cap.
 	[[ "$status" -eq 0 ]] || [[ "$status" -eq 124 ]]
-	# When it actually completes, output must contain at least one
-	# `cat/pkg`-shaped row.
-	(( status == 124 )) || [[ "$output" == */* ]]
+	# When it completes, any output must be cat/pkg-shaped — but a sparse
+	# host (e.g. CI stage3) can legitimately have zero matching revdeps,
+	# so empty output is accepted too.
+	(( status == 124 )) || [[ -z "$output" ]] || [[ "$output" == */* ]]
 }
 
 @test "smoke: -L rev-depends-slot/python (full cpv) exits 0 or times out" {
@@ -90,9 +91,10 @@ setup() {
 	# heavily depended on; on populated maintainer systems even the
 	# slot-aware walk can exceed the 120s cap.
 	[[ "$status" -eq 0 ]] || [[ "$status" -eq 124 ]]
-	# When it actually completes, output must contain at least one
-	# `cat/pkg`-shaped row.
-	(( status == 124 )) || [[ "$output" == */* ]]
+	# When it completes, any output must be cat/pkg-shaped — but a sparse
+	# host (e.g. CI stage3) can legitimately have zero matching revdeps,
+	# so empty output is accepted too.
+	(( status == 124 )) || [[ -z "$output" ]] || [[ "$output" == */* ]]
 }
 
 @test "smoke: -L --for-emerge --full-atoms portage exits 0; rows start with '='" {
