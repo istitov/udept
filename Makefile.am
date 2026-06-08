@@ -23,6 +23,10 @@ EXTRA_DIST = \
 	tests/unit/comm_ver.bats \
 	tests/unit/usecomponent.bats \
 	tests/unit/db_grep.bats \
+	tests/unit/ask_install_new_file.bats \
+	tests/unit/filter_world.bats \
+	tests/unit/install_new_file.bats \
+	tests/unit/filter_etc_file.bats \
 	tests/smoke/test_helper.bash \
 	tests/smoke/help.bats \
 	tests/smoke/info_actions.bats \

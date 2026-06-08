@@ -3812,11 +3812,21 @@ function userquery() {
 # === bashrc_filter, filter_etc_portage, print_stats, ask_install_new_file.
 # ============================================================================
 
-# install_new_file: cat $1 over $2, escalating via doas/sudo/su when non-root; printf %q quoted to defend special chars.
+# install_new_file: cat $1 over $2; write directly when root or the target is already writable, else escalate via doas/sudo/su; printf %q quoted to defend special chars.
 function install_new_file() {
 	local new="$1" target="$2"
 	# Already root: no privilege escalation needed.
 	if (( EUID == 0 )); then
+		cat -- "$new" >"$target"
+		return $?
+	fi
+	# Non-root, but the target may already be ours to write: an existing
+	# writable file, or a new file in a writable directory. Write directly
+	# in that case rather than escalating — this avoids spurious doas/sudo
+	# prompts and root-owned files when dep runs against a user-owned tree
+	# (a non-root EROOT, a test sandbox, ...). Escalate only when the
+	# target genuinely isn't ours to write.
+	if [[ -w "$target" ]] || { [[ ! -e "$target" ]] && [[ -w "${target%/*}" ]]; }; then
 		cat -- "$new" >"$target"
 		return $?
 	fi
@@ -3852,10 +3862,10 @@ function install_new_file() {
 
 # filter_world: pruneworld: drop entries from $WORLD_FILE whose reverse-tree is empty, then ask_install_new_file the rewrite.
 function filter_world() {
-	# Operates only on /var/lib/portage/world (atom entries). The companion
-	# /var/lib/portage/world_sets file (set references like @kde-meta) is
-	# user-curated; pruneworld doesn't touch it. world_sets *contents* still
-	# count as "WORLD" in revdep walks, see _smartdep_nopv.
+	# Operates only on the world file ($WORLD_FILE — atom entries). The
+	# companion world_sets file ($WORLD_SETS_FILE, set references like
+	# @kde-meta) is user-curated; pruneworld doesn't touch it. world_sets
+	# *contents* still count as "WORLD" in revdep walks, see _smartdep_nopv.
 	cat ${WORLD_FILE} \
 	| sort \
 	| tee $temp_dir/oldworld \
@@ -3878,7 +3888,7 @@ function filter_world() {
 		done | tee $temp_dir/newworld
 	)
 	print_stats
-	ask_install_new_file $temp_dir/oldworld $temp_dir/newworld /var/lib/portage/world "world file"
+	ask_install_new_file $temp_dir/oldworld $temp_dir/newworld "$WORLD_FILE" "world file"
 }
 
 # filter_etc_file: drive one /etc/portage file's filter: preserve comments, run filter[] callback per line, write to $newfile.
@@ -3919,6 +3929,9 @@ function filter_etc_file() {
 			else
 				echo "${RD}!!!REDUNDANT ENTRY!!!${NO} ${BR}${line_no_comments}${NO}" >&2
 				echo "${RD}${result}${NO}" >&2
+				# Discard the comment block that introduced this now-removed
+				# entry so it doesn't migrate onto the next kept line.
+				attached=""
 			fi
 		fi
 	done <"$filename" | tee "$newfile"
@@ -4206,7 +4219,12 @@ function ask_install_new_file() {
 	local merged="$temp_dir/merged-${old//\//_}"
 	diff -q "$old" "$new" >/dev/null && return
 	case $do_action in
-		pretend ) exit 0;;
+		# --pretend is a dry-run: filter_etc_file/filter_world already
+		# printed the candidate file (stdout) and flagged the dropped
+		# entries (stderr) before calling us. Return rather than exit, so
+		# filter_etc_portage keeps walking the remaining files instead of
+		# stopping at the first one that has changes.
+		pretend ) return 0;;
 		ask ) while :; do
 			userquery "Install new $name?" Install GR Skip RD Diff BL Merge FC
 			case $? in
