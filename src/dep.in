@@ -595,14 +595,21 @@ trap 'exit 1' SIGINT
 # needle is being sought (in a haystack, normally)
 
 temp_dir="$(mktemp -t -d dep.XXXXXXXX)" || exit 1
-# rm -rf and 2>/dev/null so the second trap firing (EXIT after TERM)
-# doesn't print 'cannot remove' for an already-deleted directory.
-# Double-quote (vs single) so $temp_dir is captured at trap-set time —
-# protects against any future reassignment, and the dir was just
-# created so the value is known good. SC2064 hints at single-quoting
-# for deferred expansion; here we want the snapshot semantic.
+# Cleanup runs from the EXIT trap only; SIGTERM (like the SIGINT trap
+# above) just exits so it fires exactly once and the script stops there.
+# Previously TERM shared this rm WITHOUT exiting, so after deleting the
+# dir the script kept running and reading/writing it — spewing 'No such
+# file' errors when a long --pruneworld / --spring-clean was cut short by
+# timeout(1) or kill. 2>/dev/null still guards the dir already being gone
+# (e.g. /tmp reaped). Double-quote (vs single) snapshots $temp_dir at
+# trap-set time — the dir was just created so the value is known good;
+# SC2064 hints at single-quoting for deferred expansion, but we want the
+# snapshot semantic.
 # shellcheck disable=SC2064
-trap "rm -rf $temp_dir 2>/dev/null" EXIT TERM
+trap "rm -rf $temp_dir 2>/dev/null" EXIT
+# 143 = 128 + SIGTERM(15); mirrors the `exit 1` SIGINT trap above so the
+# EXIT cleanup runs once and execution doesn't continue past the signal.
+trap 'exit 143' TERM
 
 # A useful trick to stack e.g. USE flags
 # 0. Concatenate the lists, from highest to lowest priority (i.e. in reverse 
@@ -1927,6 +1934,10 @@ function makeideal() {
 	[[ "$my_redundant" ]] && emerge -vC $portage_action_arg $my_redundant
 	[[ "$missing" ]] && emerge -v1 $portage_action_arg \
 					$(echo "$missing" | sed 's/^/=/')
+	# The analysis completed; return 0 rather than leaking the exit status
+	# of the trailing `[[ "$missing" ]] && ...`, which is 1 whenever there
+	# is nothing to install (e.g. `dep -s` on an already-tidy system).
+	return 0
 }
 	
 # raw_depends: emit RDEPEND/PDEPEND/IDEPEND (+DEPEND/BDEPEND if build-time) of cpv $1 as one tokenised entry per line.

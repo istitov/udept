@@ -63,3 +63,14 @@ setup() {
 	run timeout "$DEP_TIMEOUT" "$DEP_BIN" --colour=no -O /tmp/udept-nonexistent-overlay
 	assert_success
 }
+
+@test "smoke: a SIGTERM'd action walker cleans up without leaking temp-dir errors" {
+	# A long --pruneworld cut short by timeout(1) must exit on SIGTERM (its
+	# TERM trap exits) instead of deleting temp_dir and then running on — the
+	# latter let the rest of the walk + print_stats touch the just-removed
+	# temp_dir, spewing 'No such file' / 'dep: line N:'. On a sparse host -wp
+	# may finish inside the 3s window; either way there must be no such leak.
+	run timeout 3 "$DEP_BIN" --colour=no -wp
+	refute_output --partial 'No such file'
+	refute_output --regexp 'line [0-9]+:'
+}
