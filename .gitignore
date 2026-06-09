@@ -34,3 +34,9 @@ COPYING
 # machines. 'make smoke-baseline' writes the default path here.
 tests/baseline.local
 tests/baseline.local.*
+
+# local-only tooling: drives the config-mutating actions over a copy of THIS
+# host's real /etc/portage, so it must never be committed (its existence and
+# any output it produces are host-specific). The committed equivalent runs
+# over synthetic fixtures in tests/property/.
+/scripts/verify-local.sh

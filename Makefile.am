@@ -34,7 +34,12 @@ EXTRA_DIST = \
 	tests/smoke/existence.bats \
 	tests/smoke/output_modes.bats \
 	tests/smoke/errors.bats \
-	tests/smoke/actions.bats
+	tests/smoke/actions.bats \
+	tests/property/test_helper.bash \
+	tests/property/comments.bats \
+	tests/property/use_filter.bats \
+	tests/property/keywords.bats \
+	tests/property/world.bats
 
 # 'make check' runs the bats unit-test suite. Override BATS to point at
 # a non-system bats binary if needed.
@@ -68,6 +73,28 @@ check-smoke:
 	  exit 1; \
 	}
 	$(BATS) $(srcdir)/tests/smoke/
+
+# 'make check-properties' runs the bats property-invariant tier: it drives the
+# REAL config-mutating filters (filter_etc_portage / filter_world) end-to-end
+# over synthetic, anonymous fixtures and asserts ORACLE-FREE invariants —
+# idempotence, atom-inventory subset, no introduced duplicate flag, and
+# comment-preservation — instead of golden output. This catches the
+# transform-corruption class both other tiers miss: `make check` stubs the
+# per-file filter callbacks, and the smoke tier never applies a mutation.
+#
+# Like the unit tier it sources dep.in (udept's paths are hard globals
+# relocatable only as a unit via EROOT, so a built-binary run can't sandbox the
+# write target while keeping metadata on the real tree). The redundancy filters
+# need real Portage metadata, so the package.use / keywords / world tests
+# self-skip when portageq or a populated /var/db/pkg is unavailable; the
+# comment-preservation tests have no such dependency and always run.
+.PHONY: check-properties
+check-properties:
+	@command -v $(BATS) >/dev/null || { \
+	  echo "error: $(BATS) not on PATH; install dev-util/bats" >&2; \
+	  exit 1; \
+	}
+	$(BATS) $(srcdir)/tests/property/
 
 # Smoke-test targets. The smoke harness exercises a fixed battery of `dep`
 # invocations against the live Portage tree and emits a stable, diffable

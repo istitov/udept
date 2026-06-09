@@ -206,6 +206,18 @@ jobs:
       - name: bats unit suite
         run: make check
 
+      # Property-invariant tier: drives the REAL config-mutating filters
+      # (filter_etc_portage / filter_world) over synthetic fixtures and
+      # asserts oracle-free invariants — idempotence, atom-inventory subset,
+      # no introduced duplicate flag, comment-preservation — instead of golden
+      # output. Catches the transform-corruption class both other tiers miss:
+      # 'make check' stubs the per-file filter callbacks, and the smoke tier
+      # never applies a mutation. Needs portageq + the populated tree (both
+      # present from the bootstrap step); the metadata-gated tests self-skip
+      # if either is absent, but in CI they run for real.
+      - name: bats property suite (transform invariants)
+        run: make check-properties
+
       # distcheck (vs plain dist) extracts the tarball into a subdir and
       # runs configure + make + make check + make install + make uninstall
       # against it — catches missing EXTRA_DIST entries and srcdir-vs-builddir

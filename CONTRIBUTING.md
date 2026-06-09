@@ -42,6 +42,7 @@ requirements:
    make
    make check           # bats unit suite (200 tests, all stubbed)
    make check-smoke     # bats smoke tier (41 tests, real Portage tree)
+   make check-properties # bats property tier (11 tests, transform invariants)
    ```
 
    `make check-smoke` needs a populated `/var/db/pkg` and the real
@@ -52,6 +53,18 @@ requirements:
    with revdep count and can exceed any reasonable wall-clock cap
    on a populated maintainer system.
 
+   `make check-properties` drives the real config-mutating filters
+   (`dep -E` / `dep -w`) over synthetic, anonymous fixtures and
+   asserts oracle-free invariants — idempotence, atom-inventory
+   subset, no introduced duplicate flag, comment-preservation —
+   rather than golden output, catching the transform-corruption
+   class the stubbed unit tier and the read-only smoke tier both
+   miss. Its `package.use`/keyword/world tests need `portageq` + a
+   populated `/var/db/pkg` and self-skip without them; the
+   comment-preservation tests always run. To exercise the same
+   invariants over your *real* `/etc/portage` (a copy — never the
+   original), use the gitignored `scripts/verify-local.sh`.
+
    And independently, the dist tarball must build cleanly in an
    isolated tree — verified by:
 
@@ -59,7 +72,7 @@ requirements:
    make distcheck
    ```
 
-   CI runs both bats tiers, `shellcheck --severity=error src/dep`,
+   CI runs all three bats tiers, `shellcheck --severity=error src/dep`,
    completion-file syntax checks (`bash -n` / `zsh -n`), and `make
    distcheck` on `gentoo/stage3:latest`. New code paths need at
    least one test.
@@ -135,7 +148,10 @@ A new flag typically needs changes in several places:
 - `completion/dep.completion.in` and `completion/dep.zsh.in` — bash
   and zsh completion templates
 - [`ChangeLog`](ChangeLog) — under the next release's entry
-- `tests/unit/` and/or `tests/smoke/` — at least one coverage test
+- `tests/unit/` and/or `tests/smoke/` — at least one coverage test;
+  a flag that rewrites `/etc/portage` or the world file also needs a
+  `tests/property/` invariant test (idempotence / subset / no-dup /
+  comment-preservation)
 
 Removing a flag touches the same places.
 
