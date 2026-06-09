@@ -1294,10 +1294,12 @@ function extract_var_from_vardb() {
 	fi
 }
 
-# Read NAME from a per-repo metadata/md5-cache/CPV file (key=value format).
-# INHERITED is reconstructed from _eclasses_ (name<TAB>md5 pairs).
+# Read NAME from a key=value md5-cache file at the caller-supplied path
+# (serves both a repo's metadata/md5-cache and Portage's generated depcache,
+# which share the format). INHERITED is reconstructed from _eclasses_
+# (name<TAB>md5 pairs).
 function extract_var_from_edb() {
-	local name=$1 tree=$2 cpv=$3
+	local name=$1 cachefile=$2
 	if [[ "$name" == INHERITED ]]; then
 		while IFS= read -r REPLY; do
 			[[ "$REPLY" == "_eclasses_="* ]] || continue
@@ -1307,26 +1309,41 @@ function extract_var_from_edb() {
 			done
 			echo
 			break
-		done <"$tree/metadata/md5-cache/$cpv"
+		done <"$cachefile"
 	else
 		while IFS= read -r REPLY; do
 			[[ "$REPLY" == "$name="* ]] || continue
 			echo "${REPLY#$name=}"
 			break
-		done <"$tree/metadata/md5-cache/$cpv"
+		done <"$cachefile"
 	fi
 }
 
-# extract_var: echo one metadata var: vardb when --original-depends, else md5-cache via best_tree, with vardb fallback if no tree match.
+# extract_var: echo one metadata var. --original-depends reads vardb; otherwise
+# repo metadata from the in-tree metadata/md5-cache OR Portage's generated
+# depcache under $EDB_DIR/dep (for overlays that ship no in-tree cache), with a
+# vardb fallback when neither cache has the cpv.
 function extract_var() {
 	local name="$1" cpv="$2" tree="$3"
 	if [[ "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
-	elif [[ "$tree" && -f "$tree/metadata/md5-cache/$cpv" ]]; then
-		extract_var_from_edb "$name" "$tree" "$cpv"
-	elif [[ -z "$tree" ]] && newtree="$(best_tree $cpv)" \
-			&& [[ -f "$newtree/metadata/md5-cache/$cpv" ]]; then
-		extract_var "$name" "$cpv" "$newtree"
+		return
+	fi
+	# Resolve the owning repo if the caller didn't name one.
+	[[ -z "$tree" ]] && tree="$(best_tree "$cpv")"
+	# Two cache locations, identical key=value format: the repo's own
+	# metadata/md5-cache, and Portage's depcache under $EDB_DIR/dep keyed by
+	# the repo's absolute path. Many overlays ship only profiles/ +
+	# metadata/layout.conf and let Portage generate the latter; without it
+	# every metadata read for such an overlay's uninstalled packages failed.
+	local cachefile=""
+	if [[ "$tree" && -f "$tree/metadata/md5-cache/$cpv" ]]; then
+		cachefile="$tree/metadata/md5-cache/$cpv"
+	elif [[ "$tree" && -f "${EDB_DIR}/dep$tree/$cpv" ]]; then
+		cachefile="${EDB_DIR}/dep$tree/$cpv"
+	fi
+	if [[ "$cachefile" ]]; then
+		extract_var_from_edb "$name" "$cachefile"
 	elif [[ -d ${VARDB_DIR}/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
 	else
