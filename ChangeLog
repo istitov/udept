@@ -1,3 +1,54 @@
+0.7.5 "Same Difference" (20260609)
+
+	Patch release.  More fixes from the per-flag shakeout — a
+	missing-ChangeLog error leak, a trailing-comment / comments-only
+	data-loss in `-E`, a metadata-cache gap on cache-less overlays, and
+	signal- and idle-exit behaviour — plus a new property-invariant test
+	tier.  The codename is the invariant that tier asserts: apply a
+	config-mutating action twice and the second run makes no difference.
+
+	* fix: src/dep — info_action_changelog (`-j` / `--changelog`) printed
+	  a "From …/ChangeLog:" header and then leaked a raw "No such file"
+	  for every package: modern trees ship no per-package ChangeLog and
+	  the `done <…/ChangeLog` redirect was unguarded.  It now checks the
+	  file exists first and emits a clean "No ChangeLog available for
+	  <cp>" notice instead.
+	* fix: src/dep — filter_etc_file (`-E`) dropped a trailing comment
+	  block, and truncated a comments-only file to zero bytes, because a
+	  pending comment block was flushed only on a blank line or a kept
+	  entry — never at EOF.  As `-E` defaults to force, that was silent
+	  data loss; the loop now flushes any pending block at EOF.
+	* fix: src/dep — extract_var read package metadata only from a repo's
+	  in-tree metadata/md5-cache (and the vardb), never Portage's depcache
+	  under $EDB_DIR/dep.  Overlays that ship no in-tree cache — so
+	  Portage generated it into /var/cache/edb — failed every metadata op
+	  on their uninstalled packages (`dep -O` alone logged 79 "failed
+	  extract_var").  The depcache is the identical key=value format and
+	  is now an EROOT-aware fallback, cutting that overlay's failures to 3
+	  (ebuilds Portage itself has not yet cached, so no metadata exists in
+	  any cache to read).
+	* fix: src/dep — the cleanup trap was a shared `rm -rf` on EXIT and
+	  TERM with no exit, so a SIGTERM or timeout(1) mid-run deleted the
+	  temp dir and let the script run on, spamming "No such file" (once
+	  for a killed `-wp`, 700+ times for the recursive `-s`).  It now
+	  splits into a one-time EXIT cleanup and a `TERM → exit 143` trap
+	  (mirroring the existing SIGINT `exit 1`).  Separately, `dep -s`
+	  (spring-clean) returned 1 when there was nothing to do — makeideal's
+	  trailing `[[ "$missing" ]] && …` leaked out as the exit code; it now
+	  returns 0 when idle.
+	* tests: the fixes above add 8 regression unit tests (257 → 265),
+	  each verified load-bearing against the pre-fix code.  Plus a new
+	  property-invariant tier (tests/property/, `make check-properties`,
+	  11 tests) that drives the real filter_etc_portage / filter_world
+	  over synthetic fixtures and asserts oracle-free invariants —
+	  idempotence, atom-inventory subset, no duplicate flag, comment
+	  preservation — the transform-corruption class the stubbed unit tier
+	  and the read-only smoke tier both miss.  Wired into CI; a gitignored
+	  scripts/verify-local.sh runs the same checks over a copy of the real
+	  /etc/portage.
+
+	AI-assist disclosure as for 0.7.1.
+
 0.7.4 "Mind the EROOT" (20260604)
 
 	Patch release.  Four fixes to the config-file apply pipeline

@@ -1,5 +1,5 @@
-AC_INIT(udept, 0.7.4)
-AC_SUBST(PACKAGE_TAG, ["Mind the EROOT"])
+AC_INIT(udept, 0.7.5)
+AC_SUBST(PACKAGE_TAG, ["Same Difference"])
 AM_INIT_AUTOMAKE([dist-xz no-dist-gzip foreign])
 
 AC_ARG_ENABLE(bash-completion, AS_HELP_STRING([--disable-bash-completion],

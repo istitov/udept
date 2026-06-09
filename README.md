@@ -140,6 +140,23 @@ dropped entry's comment no longer migrates onto the next kept line.
 fixes were additionally validated end-to-end against a writable
 sandbox. AI-assist disclosure as for 0.7.1.
 
+The **0.7.5** release (2026), "Same Difference", is a patch release —
+more fixes from the per-flag shakeout, plus a property-invariant test
+tier. `dep -j` no longer leaks a raw "No such file" for every package
+on trees that ship no per-package ChangeLog; `-E` no longer drops a
+trailing comment block or truncates a comments-only file (it defaults
+to force, so that was real data loss); `extract_var` now falls back to
+Portage's depcache under `$EDB_DIR/dep`, so overlays that ship no
+in-tree md5-cache work (`dep -O` failed extracts on one such overlay
+dropped 79 → 3); a SIGTERM mid-run exits cleanly instead of spamming
+errors; and `dep -s` returns 0 when there is nothing to do. A new
+property tier (`tests/property/`, `make check-properties`, 11 tests)
+drives the real config-mutating filters over synthetic fixtures and
+asserts idempotence, inventory-preservation, no duplicate flag, and
+comment-preservation rather than golden output — the codename's
+invariant. 8 new unit tests (257 → 265) pin the fixes. AI-assist
+disclosure as for 0.7.1.
+
 See `ChangeLog` for the full per-release history.
 
 ## Other known repositories
