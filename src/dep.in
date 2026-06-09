@@ -2924,6 +2924,13 @@ function info_action_changelog() {
 	local tree cp="${cpv%-$VER_SHPAT}"
 	tree="$(best_tree $cpv)"
 	local pn=${cp#*/} ver="${cpv#$cp-}" ready="" entries=0
+	# Modern Portage trees no longer ship per-package ChangeLog files (the
+	# history lives in git instead), so the redirect below would otherwise
+	# leak a raw bash "No such file or directory" for every package.
+	if [[ ! -f "$tree/$cp/ChangeLog" ]]; then
+		echo "${RD}!!!${NO} No ChangeLog available for ${BR}$cp${NO}"
+		return
+	fi
 	echo "From ${BR}$tree/$cp/ChangeLog${NO}:"
 	while read; do
 		[[ "$REPLY" == \#* ]] && continue
@@ -3907,7 +3914,9 @@ function filter_etc_file() {
 	echo >&2
 	echo "${BR}Checking $filename for redundant entries...${NO}" >&2
 	local comments="" attached="" result line args
-	while read -r; do
+	# Group the loop so the EOF flush below runs in the SAME subshell
+	# (the one piped to tee) where $comments is accumulated.
+	{ while read -r; do
 		if [[ "${REPLY}" == "#"* ]]; then
 			comments="${comments}${REPLY}"$'\n'
 		elif [[ -z "${REPLY}" ]]; then
@@ -3934,7 +3943,13 @@ function filter_etc_file() {
 				attached=""
 			fi
 		fi
-	done <"$filename" | tee "$newfile"
+	done <"$filename"
+	# Flush a comment block still pending at EOF. Without this, a trailing
+	# comment block (or a file consisting entirely of comments) is silently
+	# dropped: comments are otherwise emitted only on a blank line or when
+	# attached to a kept entry. That was data loss in -E (force) mode.
+	[[ "$comments" ]] && printf '%s' "$comments"
+	} | tee "$newfile"
 	ask_install_new_file "$filename" "$newfile" "$filename" "$1"
 }
 

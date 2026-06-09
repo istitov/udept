@@ -214,14 +214,19 @@ setup() {
 	assert_output --partial 'sys-apps/portage'
 }
 
-@test "smoke: --changelog=3 portage emits ChangeLog headers" {
+@test "smoke: --changelog=3 portage emits a ChangeLog section or a clean notice" {
 	require_target PN_PORTAGE
 	run timeout "$DEP_TIMEOUT" "$DEP_BIN" --colour=no --changelog=3 "$PN_PORTAGE"
 	assert_success
-	# Each per-cat changelog block is preceded by 'From <path>/ChangeLog:'.
-	# Asserts the header anchor — a regression that emits raw ChangeLog
-	# content without the section labels would surface here.
+	# Modern Portage trees no longer ship per-package ChangeLog files, so the
+	# output is either the 'From <path>/ChangeLog:' section header (old trees
+	# that still carry them) or the clean 'No ChangeLog available for ...'
+	# notice (typical today). Both contain the 'ChangeLog' anchor.
 	assert_output --partial 'ChangeLog'
+	# Either way the missing-file path must NOT leak a raw bash redirection
+	# error ('dep: line N: .../ChangeLog: No such file or directory').
+	refute_output --partial 'No such file'
+	refute_output --regexp 'line [0-9]+:'
 }
 
 @test "smoke: -u usedesc/portage emits a known IUSE flag" {

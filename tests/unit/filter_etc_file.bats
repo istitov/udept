@@ -38,3 +38,41 @@ setup() {
 	assert_line --partial 'cat/kept flag'
 	refute_line --partial 'comment for the dropped entry'
 }
+
+@test "filter_etc_file: a trailing comment block (no blank after it) survives to EOF" {
+	# Without the EOF flush, a comment block at end-of-file is dropped:
+	# comments are otherwise only emitted on a blank line or when attached
+	# to a kept entry, and there is neither after the last one here.
+	printf '%s\n%s\n' \
+		'cat/kept flag' \
+		'# trailing note that must survive' \
+		>"$ETC_PORTAGE_DIR/package.use"
+
+	# shellcheck disable=SC2317  # called via "${filter[@]}" name-dispatch
+	myfilter() { echo ''; }   # keep every entry
+
+	( set +e; filter_etc_file package.use myfilter ) >/dev/null 2>/dev/null
+
+	run cat "$temp_dir/package.use"
+	assert_line --partial 'cat/kept flag'
+	assert_line --partial 'trailing note that must survive'
+}
+
+@test "filter_etc_file: a comments-only file is not wiped to empty" {
+	# Regression: a file with only comments (no entries, no trailing blank)
+	# was emptied entirely because the pending comment block was never
+	# flushed at EOF.
+	printf '%s\n%s\n' \
+		'# a standalone note' \
+		'# and a second line of it' \
+		>"$ETC_PORTAGE_DIR/package.use"
+
+	# shellcheck disable=SC2317  # called via "${filter[@]}" name-dispatch
+	myfilter() { echo ''; }
+
+	( set +e; filter_etc_file package.use myfilter ) >/dev/null 2>/dev/null
+
+	run cat "$temp_dir/package.use"
+	assert_line --partial 'a standalone note'
+	assert_line --partial 'and a second line of it'
+}
