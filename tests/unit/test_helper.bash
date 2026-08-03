@@ -57,7 +57,10 @@ load_dep() {
 	_bats_exit_trap=$(trap -p EXIT)
 	_bats_term_trap=$(trap -p TERM)
 	_bats_err_trap=$(trap -p ERR)
-	set --
+	# Optional arguments let parser-focused tests source dep.in with a
+	# deliberate argv; ordinary callers pass none and retain the historical
+	# empty argument list.
+	set -- "$@"
 	# bats runs with set -e; dep.in uses '((counter++))' patterns that
 	# return non-zero when the pre-increment value is 0, which would
 	# abort sourcing under errexit. Disable around the source. Also

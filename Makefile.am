@@ -4,7 +4,9 @@ EXTRA_DIST = \
 	.editorconfig \
 	.shellcheckrc \
 	CONTRIBUTING.md \
+	RELEASE_NOTES-0.8.0.md \
 	SECURITY.md \
+	tests/baseline.ci \
 	tests/smoke.sh \
 	tests/smoke-diff.sh \
 	tests/unit/test_helper.bash \
@@ -24,15 +26,24 @@ EXTRA_DIST = \
 	tests/unit/usecomponent.bats \
 	tests/unit/db_grep.bats \
 	tests/unit/ask_install_new_file.bats \
+	tests/unit/action_modes.bats \
+	tests/unit/atom_match.bats \
 	tests/unit/filter_world.bats \
 	tests/unit/install_new_file.bats \
+	tests/unit/html_render.bats \
+	tests/unit/eroot_paths.bats \
+	tests/unit/info_action_size.bats \
 	tests/unit/filter_etc_file.bats \
+	tests/unit/extract_var.bats \
+	tests/unit/info_action_changelog.bats \
+	tests/unit/makeideal.bats \
 	tests/smoke/test_helper.bash \
 	tests/smoke/help.bats \
 	tests/smoke/info_actions.bats \
 	tests/smoke/virtuals.bats \
 	tests/smoke/existence.bats \
 	tests/smoke/output_modes.bats \
+	tests/smoke/html_safety.bats \
 	tests/smoke/errors.bats \
 	tests/smoke/actions.bats \
 	tests/property/test_helper.bash \
@@ -40,6 +51,11 @@ EXTRA_DIST = \
 	tests/property/use_filter.bats \
 	tests/property/keywords.bats \
 	tests/property/world.bats
+
+EXTRA_DIST += \
+	tests/oracle/portage_atom_cases.py \
+	tests/oracle/check_atom_cases.sh \
+	tests/check-dist-inventory.sh
 
 # 'make check' runs the bats unit-test suite. Override BATS to point at
 # a non-system bats binary if needed.
@@ -95,6 +111,18 @@ check-properties:
 	  exit 1; \
 	}
 	$(BATS) $(srcdir)/tests/property/
+
+.PHONY: check-oracle
+check-oracle:
+	@command -v python3 >/dev/null || { echo "error: python3 not on PATH" >&2; exit 1; }
+	@python3 -c 'import portage' 2>/dev/null || { echo "error: Python Portage module unavailable" >&2; exit 1; }
+	python3 $(srcdir)/tests/oracle/portage_atom_cases.py \
+	  | bash $(srcdir)/tests/oracle/check_atom_cases.sh $(srcdir)/src/dep.in
+
+.PHONY: check-dist-inventory
+check-dist-inventory: dist
+	bash $(srcdir)/tests/check-dist-inventory.sh \
+	  $(PACKAGE_TARNAME)-$(PACKAGE_VERSION).tar.xz $(srcdir)
 
 # Smoke-test targets. The smoke harness exercises a fixed battery of `dep`
 # invocations against the live Portage tree and emits a stable, diffable

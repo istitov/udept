@@ -32,6 +32,11 @@ if (( BASH_VERSINFO[0] < 4 \
 fi
 
 shopt -s extglob
+# Bash 5.2's patsub_replacement option makes an unquoted '&' in the
+# replacement side of ${parameter//pattern/replacement} expand to the matched
+# text.  udept's output escaping must have identical semantics on every
+# supported Bash, so keep the historical literal-replacement behaviour.
+shopt -u patsub_replacement 2>/dev/null || true
 
 spaces="                                                                                "
 spaces="${spaces:0:${COLUMNS:=80}}"
@@ -41,8 +46,9 @@ spaces="${spaces:0:${COLUMNS:=80}}"
 # print text. resolve_eroot_paths (below) reruns the assignments after
 # asking portageq about the real EROOT/EPREFIX — the result is identical
 # for /-rooted setups but correct on Gentoo Prefix and chroot.
-EPREFIX=""
-EROOT=""
+EPREFIX="${EPREFIX:-}"
+EROOT="${EROOT:-}"
+PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT:-}"
 VARDB_DIR="/var/db/pkg"
 # EDB_DIR is set as part of the path-roots scaffolding (mirrors the
 # others, updated by resolve_eroot_paths for Gentoo Prefix / chroot
@@ -71,25 +77,99 @@ function resolve_eroot_paths() {
 	# Fast path for the standard /-rooted layout — the defaults at the
 	# top of the script are already correct, and we save a portageq
 	# round-trip per invocation. The directory check is cheap.
-	[[ -d /var/db/pkg && ! "${PORTAGE_OVERRIDE_EPREFIX:-}" ]] && return
-	if command -v portageq >/dev/null 2>&1; then
+	local explicit_roots="${EROOT:+yes}${EPREFIX:+yes}${PORTAGE_CONFIGROOT:+yes}"
+	[[ -z "$explicit_roots" \
+		&& -z "${PORTAGE_CONFIGROOT:-}" \
+		&& -d /var/db/pkg && ! "${PORTAGE_OVERRIDE_EPREFIX:-}" ]] && return
+	if [[ -z "$explicit_roots" ]] && command -v portageq >/dev/null 2>&1; then
 		eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
 	fi
+	case "${EROOT:-/}" in /*) ;; *) printf 'dep: EROOT must be absolute: %s\n' "$EROOT" >&2; return 1;; esac
+	case "${EPREFIX:-/}" in /*) ;; *) printf 'dep: EPREFIX must be absolute: %s\n' "$EPREFIX" >&2; return 1;; esac
+	case "${PORTAGE_CONFIGROOT:-/}" in /*) ;; *) printf 'dep: PORTAGE_CONFIGROOT must be absolute: %s\n' "$PORTAGE_CONFIGROOT" >&2; return 1;; esac
 	EPREFIX="${EPREFIX:-}"; EPREFIX="${EPREFIX%/}"
 	EROOT="${EROOT:-/}";   EROOT="${EROOT%/}"
-	# When EROOT and EPREFIX are both empty (the standard / layout), the
-	# defaults above are already correct — nothing to do.
-	[[ -z "$EROOT" && -z "$EPREFIX" ]] && return
+	PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT:-}"; PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT%/}"
+	# With no explicit roots, the standard /-layout defaults above are already
+	# correct. A standalone PORTAGE_CONFIGROOT still needs to relocate
+	# /etc/portage, even when EROOT and EPREFIX are empty.
+	[[ -z "$EROOT" && -z "$EPREFIX" && -z "$PORTAGE_CONFIGROOT" ]] && return
 	VARDB_DIR="${EROOT}/var/db/pkg"
 	# Same scaffolding-for-future-EDB-integration as the global decl.
 	# shellcheck disable=SC2034
 	EDB_DIR="${EROOT}/var/cache/edb"
 	PORTAGE_LIB_DIR="${EROOT}/var/lib/portage"
 	PORTAGE_LOG_DIR="${EROOT}/var/log/portage"
-	ETC_PORTAGE_DIR="${EPREFIX}/etc/portage"
+	ETC_PORTAGE_DIR="${PORTAGE_CONFIGROOT}${EPREFIX}/etc/portage"
 	WORLD_FILE="${PORTAGE_LIB_DIR}/world"
 	WORLD_SETS_FILE="${PORTAGE_LIB_DIR}/world_sets"
 	ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
+}
+
+# html_render_stream: escape an arbitrary byte stream and translate only the
+# SGR/OSC sequences emitted by udept into fixed HTML markup.  All package
+# metadata, paths, argv, diagnostics, and control characters pass through this
+# one boundary, so none can be interpreted as markup.  A colour change closes
+# the previous span before opening another; EOF closes a still-active span.
+function html_render_stream() {
+	LC_ALL=C awk '
+	BEGIN {
+		esc = sprintf("%c", 27); bel = sprintf("%c", 7)
+		sgr[esc "[0;01m"] = "BR"
+		sgr[esc "[31;01m"] = "RD"; sgr[esc "[00;31m"] = "dkRd"
+		sgr[esc "[32;01m"] = "GR"; sgr[esc "[00;32m"] = "dkGr"
+		sgr[esc "[33;01m"] = "YL"; sgr[esc "[00;33m"] = "dkYl"
+		sgr[esc "[34;01m"] = "BL"; sgr[esc "[00;34m"] = "dkBl"
+		sgr[esc "[35;01m"] = "FC"; sgr[esc "[00;35m"] = "dkFc"
+		sgr[esc "[36;01m"] = "CY"; sgr[esc "[00;36m"] = "dkCy"
+	}
+	function escaped(s) {
+		gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;", s)
+		gsub(/>/, "\\&gt;", s); gsub(/"/, "\\&quot;", s)
+		gsub(/\047/, "\\&#39;", s)
+		gsub(/[\001-\010\013\014\016-\037\177]/, "", s)
+		return s
+	}
+	function close_span() { if (active) { printf "</span>"; active = 0 } }
+	{
+		s = $0; i = 1
+		while (i <= length(s)) {
+			if (substr(s, i, 1) != esc) {
+				j = index(substr(s, i), esc)
+				if (!j) { printf "%s", escaped(substr(s, i)); i = length(s) + 1 }
+				else { printf "%s", escaped(substr(s, i, j - 1)); i += j - 1 }
+				continue
+			}
+			matched = 0
+			for (seq in sgr) if (substr(s, i, length(seq)) == seq) {
+				close_span(); printf "<span class=\"%s\">", sgr[seq]
+				active = 1; i += length(seq); matched = 1; break
+			}
+			if (matched) continue
+			if (substr(s, i, 6) == esc "[0;0m" || substr(s, i, 4) == esc "[0m") {
+				close_span(); i += (substr(s, i, 6) == esc "[0;0m" ? 6 : 4)
+				continue
+			}
+			if (substr(s, i, 4) == esc "]2;") {
+				rest = substr(s, i + 4); end = index(rest, bel)
+				if (end) {
+					close_span()
+					printf "<div class=\"titlebar\">%s</div>", escaped(substr(rest, 1, end - 1))
+					i += 3 + end + 1; continue
+				}
+			}
+			# Unknown terminal controls are data neither HTML nor a terminal
+			# should execute.  Drop the introducer and continue escaping.
+			i++
+		}
+		printf "\n"
+	}
+	END { close_span() }
+	'
+}
+
+function html_escape_text() {
+	printf '%s' "$*" | html_render_stream
 }
 
 # ============================================================================
@@ -106,7 +186,6 @@ function resolve_eroot_paths() {
 function help_fmt() {
 	PLUSMINUS="$(iconv -c -f UTF-8 <<<$'\xc2\xb1')" || PLUSMINUS="+-"
 	sed -r -e "
-	$([[ "$opt_arg_colour" == "html" ]] && echo 's/</\&lt;/g;s/>/\&gt;/g')
 	s![[:upper:]_]{2,}!${RD}\\0${NO}!g
 	s!( |^)$PROG( |$)!$Cy\\0$NO!
 	s!^[^[:space:]].*:!$YL\\0$NO!
@@ -322,8 +401,9 @@ arg opt o original-depends "Calculate deps as when PACKAGE was merged" '' BINARY
 arg opt q unique-depends "Show dependencies that only PACKAGE requires" '' BINARY no
 arg opt D depth "Depth to follow dependency trees" '' NUMBER unlimited
 arg opt n uninstalled 	"Include uninstalled packages in searches" '' BINARY no
-arg opt a ask 			"For -[Pdw]: ask to perform action" 	   '' BINARY yes
+arg opt a ask 			"For mutating actions: prompt before applying changes" '' BINARY no
 arg opt p pretend 		"For -[Pdw]: just show what would be done" '' BINARY no
+arg opt '' force          "For mutating actions: apply changes without prompting" '' BINARY no
 
 # handle_arg_action: argv-parser callback: set do_arg_action when $1 matches the long/short name at idx $2.
 function handle_arg_action() {
@@ -465,12 +545,21 @@ for ((i=0; i<shopt_count; ++i)); do
 	do_info_shopt_idx=$i
 done
 
-if [[ "$opt_arg_pretend" ]]; then
-	do_action="pretend"; portage_action_arg="--pretend"
+action_mode_count=0
+[[ "$opt_arg_pretend" ]] && ((++action_mode_count))
+[[ "$opt_arg_ask" ]] && ((++action_mode_count))
+[[ "$opt_arg_force" ]] && ((++action_mode_count))
+if (( action_mode_count > 1 )); then
+	arg_error="--pretend, --ask, and --force are mutually exclusive"
+	do_arg_action="usage"
+fi
+
+if [[ "$opt_arg_force" ]]; then
+	do_action="force"; portage_action_arg=""
 elif [[ "$opt_arg_ask" ]]; then
 	do_action="ask"; portage_action_arg="--ask"
 else
-	do_action="force"; portage_action_arg=""
+	do_action="pretend"; portage_action_arg="--pretend"
 fi
 
 [[ "$do_arg_info" == "owners" ]] && load_config="" || load_config="yes"
@@ -493,7 +582,7 @@ if [[ "$opt_arg_for_emerge" ]]; then
 	outputtoterminal=""
 fi
 
-if [[ "$opt_arg_colour" == "yes" ]]; then
+if [[ "$opt_arg_colour" == "yes" || "$opt_arg_colour" == "html" ]]; then
 	NO=$'\x1b[0;0m'
 	BR=$'\x1b[0;01m'
 	RD=$'\x1b[31;01m' Rd=$'\x1b[00;31m'
@@ -502,26 +591,29 @@ if [[ "$opt_arg_colour" == "yes" ]]; then
 	BL=$'\x1b[34;01m' Bl=$'\x1b[00;34m'
 	FC=$'\x1b[35;01m' Fc=$'\x1b[00;35m'
 	CY=$'\x1b[36;01m' Cy=$'\x1b[00;36m'
-elif [[ "$opt_arg_colour" == "html" ]]; then
-	NO="</span>"
-	for x in BR RD GR YL BL FC CY; do
-		eval "$x=\"<span class=\\\"$x\\\">\""
-	done
-	for x in Rd Gr Yl Bl Fc Cy; do
-		eval "$x=\"<span class=\\\"dk$x\\\">\""
-	done
-	exec 2>&1
 else
 	for x in NO BR RD Rd GR Gr YL Yl BL Bl FC Fc CY Cy; do
 		eval $x=""
 	done
 fi
 
+# HTML is implemented as an outer encoder process around an otherwise normal
+# coloured invocation.  Start it before the help/version short-circuit so
+# those paths receive the same escaping as full Portage-backed commands.
+if [[ "$0" == */dep && "$opt_arg_colour" == "html" \
+	&& -z "${UDEPT_HTML_RENDERING:-}" ]]; then
+	UDEPT_HTML_RENDERING=1 "$0" "$@" 2>&1 | html_render_stream
+	exit "${PIPESTATUS[0]}"
+fi
+
 # short-circuit portage import
 [[ "$0" == */dep ]] && case "$do_arg_action" in
 	help) print_help | help_fmt; exit;;
 	version) print_version | help_fmt; exit;;
-	usage) print_usage | help_fmt; exit;;
+	usage)
+		[[ "$arg_error" ]] && printf 'dep: %s\n' "$arg_error" >&2
+		print_usage | help_fmt
+		[[ "$arg_error" ]] && exit 2 || exit 0;;
 esac
 
 # ============================================================================
@@ -531,10 +623,13 @@ esac
 
 # html_wrap: wrap a 'dep ...' run as a styled <pre>; re-execs dep with --colour=html and the original argv.
 function html_wrap() {
+	local escaped_title escaped_command
+	escaped_title=$(html_escape_text "$PROG $*")
+	escaped_command=$(html_escape_text "$PROG $*")
 	cat <<END
 <html>
 <head>
-	<title>$PROG $*</title>
+	<title>${escaped_title}</title>
 	<style>
 		pre.terminal { background-color: white; border: solid thin; 
 			padding-left: 2px; padding-right: 2px; 
@@ -566,9 +661,9 @@ function html_wrap() {
 </head>
 <body>
 	<pre class="terminal">
-<span class="BL">$([[ "$EUID" == 0 ]] && echo '#' || echo '$')</span> $PROG $@
+<span class="BL">$([[ "$EUID" == 0 ]] && echo '#' || echo '$')</span> ${escaped_command}
 END
-	$PROG --verbose --colour=html "$@" | sed 's!\(^\|<[^>/]\+>\)\(.*\)\(.*\)\(<[^>/]\+/>\|$\)!\1\2<span></span>\3\4!g'
+	$PROG --verbose --colour=html "$@"
 cat <<END
 	</pre>
 </body>
@@ -686,8 +781,7 @@ function rpad() {
 # set_xterm_title: emit OSC title sequence on stderr to update xterm/screen titlebar (or html titlebar div).
 function set_xterm_title() {
 	if [[ "$opt_arg_colour" == "html" ]]; then
-		local args="${*//</&lt;}"
-		echo -n "<div class=\"titlebar\">${args//>/&gt;}</div>" >&2
+		printf '\033]2;%s\007' "$*" >&2
 	else
 		[[ "$TERM" = @(@(x|E|a|k)term|rxvt|gnome|screen)* ]] \
 			&& echo -n $'\x1b']"2;$*"$'\x07' >&2
@@ -714,6 +808,7 @@ function memoise() {
 	eval "__memoised__$1() { $(typeset -f $1 | sed '1,2d;$d'); }
 	$1() {
 		[[ -d $temp_dir ]] || return 1
+		mkdir -p \"$temp_dir/$1\" || return 1
 		local x=\"$temp_dir/$1/_\${*//\//:}\"
 		(( \${#x} > 255 )) && x=\"$temp_dir/$1/\$(sha1sum <<<\"\$*\")\"
 		RETVAL=0
@@ -733,6 +828,24 @@ function memoise() {
 		fi
 		trap - SIGPIPE
 		return \$RETVAL
+	}"
+}
+
+# memoise_predicate: cache only the status of a stdout-free predicate.
+function memoise_predicate() {
+	mkdir -p "$temp_dir/$1"
+	eval "__memoised_predicate__$1() { $(typeset -f "$1" | sed '1,2d;$d'); }
+	$1() {
+		[[ -d \"\$temp_dir\" ]] || return 1
+		mkdir -p \"\$temp_dir/$1\" || return 1
+		local x=\"\$temp_dir/$1/_\${*//\//:}\" rc
+		if [[ -r \"\$x\" ]]; then
+			read -r rc <\"\$x\"
+		else
+			__memoised_predicate__$1 \"\$@\"; rc=\$?
+			printf '%s\\n' \"\$rc\" >\"\$x\"
+		fi
+		return \"\$rc\"
 	}"
 }
 
@@ -833,9 +946,6 @@ function format_depatom() {
 	cpvs=${atom/#[<>]=}; cpvs=${cpvs/#[=~<>]}; cpvs=${cpvs#\*}
 	vs=${atom%$cpvs}
 	cpv=${cpvs%\*}; star=${cpvs#$cpv}
-	if [[ "$opt_arg_colour" == "html" ]]; then
-		vs=${vs//</&lt;}; vs=${vs//>/&gt;}
-	fi
 	if [[ "$asvirtual" ]]; then col=FC; elif [[ "${bang}" ]]; then col=RD;
 	else col=Gr; fi
 	echo $bang$vs${!col}$cpv${NO}${star}
@@ -1036,7 +1146,7 @@ function load_portage_config() {
 	eval "$(portageq envvar -v \
 		DISTDIR PKGDIR PORTAGE_TMPDIR CCACHE_DIR \
 		CHOST ARCH ACCEPT_KEYWORDS \
-		USE_EXPAND USE_ORDER USE 2>/dev/null)"
+		FEATURES USE_EXPAND USE_ORDER USE 2>/dev/null)"
 	__conf_USE="$USE"
 	# Round 2: each USE_EXPAND'd var (LINGUAS, PYTHON_TARGETS, …).
 	if [[ "$USE_EXPAND" ]]; then
@@ -1055,7 +1165,6 @@ function load_portage_config() {
 		| stacking_sort yes
 	)
 
-	usemask_unstacked=$(kill_comments_and_blanks $(profile_files use.mask))
 }
 
 # Cache reads now flow through metadata/md5-cache (per-repo) and the vardb;
@@ -1098,6 +1207,113 @@ function dep_satisfies_mlsr() {
 	vercmp "${t_mlsr}" "${vs}" "${d_mlsr}"
 }
 
+# atom_parse: split an EAPI 8 atom into blocker/operator/CP/version/slot/repo/
+# USE-dependency fields.  Results use the ATOM_* prefix so callers can copy
+# the fields they need before invoking helpers which may parse another atom.
+function atom_parse() {
+	local atom=$1 body
+	# ATOM_RAW and ATOM_BLOCKER are part of the parser interface used by
+	# diagnostics/tests even though the matcher does not need them directly.
+	# shellcheck disable=SC2034
+	ATOM_RAW=$atom ATOM_BLOCKER='' ATOM_OP='' ATOM_CP='' ATOM_VERSION=''
+	ATOM_SLOT='' ATOM_REPO='' ATOM_USE=''
+	# shellcheck disable=SC2034
+	case "$atom" in !!*) ATOM_BLOCKER=!!; atom=${atom#!!};; !*) ATOM_BLOCKER=!; atom=${atom#!};; esac
+	if [[ "$atom" == *\[*\] ]]; then
+		ATOM_USE=${atom##*\[}; ATOM_USE=${ATOM_USE%\]}
+		atom=${atom%%\[*}
+	fi
+	if [[ "$atom" == *::* ]]; then
+		ATOM_REPO=${atom##*::}; atom=${atom%%::*}
+	fi
+	if [[ "$atom" == *:* ]]; then
+		ATOM_SLOT=${atom##*:}; atom=${atom%%:*}
+	fi
+	case "$atom" in
+		'>='*|'<='*) ATOM_OP=${atom:0:2}; body=${atom:2};;
+		'='*|'~'*|'>'*|'<'*) ATOM_OP=${atom:0:1}; body=${atom:1};;
+		*) body=$atom;;
+	esac
+	ATOM_CP=${body/%-$VER_SHPAT?(\*)}
+	if [[ "$ATOM_CP" != "$body" ]]; then
+		ATOM_VERSION=${body#"$ATOM_CP"-}
+		# A concrete CPV supplied on the CLI has exact-version meaning even
+		# without a leading '='. Dependency metadata itself always uses an
+		# operator for versioned atoms.
+		[[ "$ATOM_OP" ]] || ATOM_OP='='
+	fi
+	[[ "$ATOM_CP" ]]
+}
+
+function repo_name_for_tree() {
+	local tree=${1%/} repo
+	for repo in "${!repo_loc[@]}"; do
+		[[ "${repo_loc[$repo]%/}" == "$tree" ]] && { echo "$repo"; return 0; }
+	done
+	return 1
+}
+
+function repo_for_cpv() {
+	local cpv=$1 tree=$2
+	if [[ -r "$VARDB_DIR/$cpv/repository" ]]; then
+		cat "$VARDB_DIR/$cpv/repository"
+	else
+		[[ "$tree" ]] || tree=$(best_tree "$cpv" 2>/dev/null)
+		repo_name_for_tree "$tree"
+	fi
+}
+
+# atom_use_satisfies: enforce EAPI 8 USE dependencies against candidate $1.
+# The optional parent package supplies the state used by ?, !?, =, and !=.
+function atom_use_satisfies() {
+	local candidate=$1 spec=$2 parent=$3 candidate_use parent_use iuse tok
+	local flag default candidate_on parent_on require_on conditional invert
+	[[ "$spec" ]] || return 0
+	if [[ -d "$VARDB_DIR/$candidate" ]]; then
+		candidate_use=$(extract_var_from_vardb USE "$candidate")
+		iuse=$(extract_var_from_vardb IUSE "$candidate" | strip_iuse_prefixes)
+	else
+		candidate_use=$(dbuse "$candidate")
+		iuse=$(extract_var IUSE "$candidate" 2>/dev/null | strip_iuse_prefixes)
+	fi
+	parent_use=${parent:+$(dbuse "$parent")}
+	while IFS= read -r tok; do
+		[[ "$tok" ]] || continue
+		default=unknown
+		case "$tok" in *\(\+\)) default=on; tok=${tok%\(\+\)};; *\(-\)) default=off; tok=${tok%\(-\)};; esac
+		conditional='' invert='' require_on=''
+		case "$tok" in
+			'!'*'?') invert=yes; conditional='?'; flag=${tok#!}; flag=${flag%?};;
+			'!'*'=') invert=yes; conditional='='; flag=${tok#!}; flag=${flag%=};;
+			*'?') conditional='?'; flag=${tok%?};;
+			*'=') conditional='='; flag=${tok%=};;
+			-*) require_on=no; flag=${tok#-};;
+			*) require_on=yes; flag=$tok;;
+		esac
+		if has "$flag" $iuse; then
+			has "$flag" $candidate_use && candidate_on=yes || candidate_on=no
+		else
+			case "$default" in on) candidate_on=yes;; off) candidate_on=no;; *) return 1;; esac
+		fi
+		if [[ "$conditional" ]]; then
+			has "$flag" $parent_use && parent_on=yes || parent_on=no
+			if [[ "$conditional" == '?' ]]; then
+				if [[ "$invert" ]]; then
+					[[ "$parent_on" == no ]] || continue
+					require_on=no
+				else
+					[[ "$parent_on" == yes ]] || continue
+					require_on=yes
+				fi
+			else
+				require_on=$parent_on
+				[[ "$invert" ]] && { [[ "$require_on" == yes ]] && require_on=no || require_on=yes; }
+			fi
+		fi
+		[[ "$candidate_on" == "$require_on" ]] || return 1
+	done < <(tr ',' '\n' <<<"$spec")
+}
+
 # dep_satisfies: test whether cpv $1 satisfies depatom $2 (cat/pn match + version); returns 2 on different cp.
 function dep_satisfies() {
 	local testpkg="$1" depatom="$2"
@@ -1117,6 +1333,27 @@ function dep_satisfies() {
 	# doesn't dereference virtuals
 	[[ "$t_cp" != "$d_cp" ]] && return 2
 	dep_satisfies_mlsr "$t_mlsr" "$vs" "$d_mlsr"
+}
+
+# dep_satisfies_atom: the shared command-path EAPI 8 matcher. Optional
+# arguments supply candidate SLOT, repository, tree, and parent CPV.
+function dep_satisfies_atom() {
+	local testpkg=$1 depatom=$2 pkg_slot=${3-} pkg_repo=${4-} parent=${5-}
+	atom_parse "$depatom" || return 2
+	local cp=$ATOM_CP version=$ATOM_VERSION op=$ATOM_OP slot=$ATOM_SLOT
+	local repo=$ATOM_REPO use=$ATOM_USE
+	local test_cp=${testpkg/%-$VER_SHPAT} test_version=${testpkg#${testpkg/%-$VER_SHPAT}-}
+	[[ "$test_cp" == "$cp" ]] || return 2
+	[[ -z "$version" ]] || dep_satisfies_mlsr "$test_version" "$op" "$version" || return 1
+	if [[ "$slot" ]]; then
+		[[ "$pkg_slot" ]] || pkg_slot=$(slot_for "$testpkg" 2>/dev/null)
+		slot_satisfies "$pkg_slot" "$slot" || return 1
+	fi
+	if [[ "$repo" ]]; then
+		[[ "$pkg_repo" ]] || pkg_repo=$(repo_for_cpv "$testpkg" 2>/dev/null)
+		[[ "$pkg_repo" == "$repo" ]] || return 1
+	fi
+	atom_use_satisfies "$testpkg" "$use" "$parent" || return 1
 }
 
 # slot_satisfies pkg_slot dep_spec
@@ -1173,22 +1410,7 @@ function slot_satisfies() {
 # If depatom has no slot constraint, behaves identically to dep_satisfies
 # (the slot lookup is skipped entirely — this is the hot path).
 function dep_satisfies_slot() {
-	local testpkg=$1 depatom=$2 pkg_slot=${3-}
-	local dep_slot_spec=
-	# Pull the slot fragment off depatom — content from first ':' up to
-	# '[' (USE-deps) or end-of-atom. Done before delegating because
-	# dep_satisfies would strip and discard it.
-	if [[ "$depatom" == *:* ]]; then
-		local after=${depatom#*:}
-		dep_slot_spec=${after%%\[*}
-	fi
-	dep_satisfies "$testpkg" "$depatom"
-	local rc=$?
-	(( rc != 0 )) && return $rc
-	[[ -z "$dep_slot_spec" ]] && return 0
-	[[ -z "$pkg_slot" ]] && pkg_slot=$(slot_for "$testpkg" 2>/dev/null)
-	slot_satisfies "$pkg_slot" "$dep_slot_spec" || return 1
-	return 0
+	dep_satisfies_atom "$1" "$2" "${3-}"
 }
 
 # accept_for: compute effective ACCEPT_KEYWORDS for cp/mlsr from package.{accept_keywords,keywords}; result in nameref $3.
@@ -1427,7 +1649,6 @@ function allvirtuals() {
 					) | dep_to_cps | while read provider; do
 						[[ "$provider" ]] && echo "$cp $provider"
 					done
-					break
 				done
 			done
 		done
@@ -1464,15 +1685,87 @@ memoise autouse
 # package_use_mask: echo merged use.mask for $1: profile package.use.mask matches stacked with unstacked use.mask.
 function package_use_mask() {
 	(
-		kill_comments_and_blanks $(profile_files package.use.mask) \
-		| while read package pusemask; do
-			dep_satisfies "$1" $package && echo $pusemask
-		done | sed 's/[[:space:]]\+/\n/g'
-		echo "$usemask_unstacked"
-	) | stacking_sort yes
+		kill_comments_and_blanks $(profile_files use.mask)
+		if package_is_stable "$1"; then
+			kill_comments_and_blanks $(profile_files use.stable.mask)
+			package_use_rules package.use.stable.mask "$1"
+		fi
+		package_use_rules package.use.mask "$1"
+	) | sed 's/[[:space:]]\+/\n/g' | stacking_sort yes
 }
 
-# usecomponent: echo USE flags contributed by one component ($1 in env/pkg/conf/auto/pkginternal/env.d; placeholder no-op for pkgprofile/defaults/features/repo) for cpv $2.
+function package_is_stable() {
+	local -a package_keywords=()
+	keywords_for "$1" "" package_keywords 2>/dev/null
+	has "$ARCH" "${package_keywords[@]}"
+}
+
+# package_use_rules: emit flags from profile/repository package.* USE files
+# whose atom matches $2, retaining highest-precedence file order.
+function package_use_rules() {
+	local name=$1 cpv=$2 package flags file tree
+	local rule_files=()
+	while read -r file; do [[ "$file" ]] && rule_files+=("$file"); done < <(profile_files "$name")
+	tree=$(best_tree "$cpv" 2>/dev/null)
+	if [[ "$tree" ]]; then
+		if [[ -d "$tree/profiles/$name" ]]; then
+			while read -r file; do rule_files+=("$file"); done < <(find "$tree/profiles/$name" -type f -readable)
+		elif [[ -r "$tree/profiles/$name" ]]; then
+			rule_files+=("$tree/profiles/$name")
+		fi
+	fi
+	(( ${#rule_files[@]} )) || return 0
+	while read -r package flags; do
+		dep_satisfies "$cpv" "$package" && printf '%s\n' "$flags"
+	done < <(kill_comments_and_blanks "${rule_files[@]}")
+}
+
+function package_use_force() {
+	(
+		if package_is_stable "$1"; then
+			kill_comments_and_blanks $(profile_files use.stable.force)
+			package_use_rules package.use.stable.force "$1"
+		fi
+		kill_comments_and_blanks $(profile_files use.force)
+		package_use_rules package.use.force "$1"
+	) | sed 's/[[:space:]]\+/\n/g' | stacking_sort yes
+}
+
+# make_defaults_use: conservative parser for the incremental USE assignment in
+# repository profiles/make.defaults. Quoted values and USE+= are supported;
+# arbitrary shell is deliberately not evaluated.
+function make_defaults_use() {
+	local file=$1
+	[[ -r "$file" ]] || return 0
+	sed -n '
+		s/^[[:space:]]*USE[[:space:]]*+\?=[[:space:]]*//
+		t use
+		b
+		:use
+		s/^["'"'"']//; s/["'"'"'][[:space:]]*$//
+		p
+	' "$file"
+}
+
+function repo_usecomponent() {
+	local cpv=$1 tree
+	[[ "$cpv" ]] || return 0
+	tree=$(best_tree "$cpv" 2>/dev/null)
+	[[ "$tree" ]] || return 0
+	package_use_rules package.use "$cpv"
+	package_is_stable "$cpv" && package_use_rules package.use.stable "$cpv"
+	make_defaults_use "$tree/profiles/make.defaults"
+}
+
+# Repeated package.use filtering revisits the same CPVs across several rule
+# classes. These inputs are immutable for one dep invocation, so cache them.
+memoise_predicate package_is_stable
+memoise package_use_rules
+memoise package_use_mask
+memoise package_use_force
+memoise repo_usecomponent
+
+# usecomponent: echo USE flags contributed by one USE_ORDER component.
 function usecomponent() {
 	# return a USE component, one flag per line, highest priority first
 	# TODO FIXME not correct yet - though OK for default case
@@ -1487,9 +1780,12 @@ function usecomponent() {
 				dep_satisfies "$cpv" $package && echo $use
 			done | sed 's/[[:space:]]\+/\n/g';;
 		conf) sed 's/[[:space:]]\+/\n/g' <<<"$__conf_USE";;
-		pkgprofile);;
+		pkgprofile) [[ "$cpv" ]] && package_use_rules package.use "$cpv";;
 		auto) autouse;;
-		defaults);;
+		defaults) [[ "$cpv" ]] && {
+			package_use_rules package.use "$cpv"
+			package_is_stable "$cpv" && package_use_rules package.use.stable "$cpv"
+		};;
 		# pkginternal and env.d had empty placeholder cases above the
 		# real handlers — the placeholders shadowed the implementations
 		# (bash case takes the first match), so pkginternal_use_for and
@@ -1506,7 +1802,8 @@ function usecomponent() {
 		# 8673115 this branch was unreachable so the missing-file error
 		# never surfaced; it became visible after activation.)
 		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' "$ETC_PORTAGE_DIR/profile.env" 2>/dev/null;;
-		features|repo);;  # TODO phase 4: implement FEATURES-forced and per-repo USE
+		features) has test $FEATURES && echo test;;
+		repo) repo_usecomponent "$cpv";;
 		*) format_error <<<"Unknown USE component: $component" >&2;;
 	esac
 }
@@ -1517,9 +1814,10 @@ function dbuse() {
 	if [[ "$cpv" && "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
 		sed -e 's/[[:space:]]\+/\n/g' ${VARDB_DIR}/$cpv/USE
 	else
-		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults:pkginternal:env.d"
+		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults:pkginternal:features:repo:env.d"
 		(
 			echo $ARCH
+			package_use_force "$cpv"
 			package_use_mask "$cpv" | sed -e 's/^/-/'
 			for component in ${USE_ORDER//:/ }; do
 				usecomponent $component "$@"
@@ -1536,6 +1834,7 @@ function dbuse() {
 		done
 	fi
 }
+memoise dbuse
 
 # Compare two numbers as fractional parts of a decimal fraction.
 # Returns negative-as-mod-256 (see comm_ver below for the convention).
@@ -1952,16 +2251,18 @@ function raw_depends() {
 		extract_var PDEPEND $cpv
 		extract_var IDEPEND $cpv
 	) | sed '
-		# Strip USE-dep brackets — [foo,-bar,baz?,quux=,(+),(-)] etc.
-		# We don'\''t propagate USE constraints through resolution, so the
-		# atom without them still names the right package.
-		s/\[[^]]*\]//g
+		# Protect the parentheses in USE dependency defaults while grouping
+		# parentheses are promoted to standalone parser tokens.
+		s/(+)/__UDEPT_USE_DEFAULT_ON__/g
+		s/(-)/__UDEPT_USE_DEFAULT_OFF__/g
 		# Slot/sub-slot/operator suffixes (:0, :*, :=, :0/2, :0=) are
 		# preserved in the token stream so slot-aware revdep filtering
 		# (dep_satisfies_slot) can read them. Slot-agnostic consumers
 		# (dep_satisfies, dep_to_cps, resolve_depatom) strip locally.
 		# Tokenise: parens become standalone tokens, whitespace -> newlines
 		s/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g
+		s/__UDEPT_USE_DEFAULT_ON__/(+)/g
+		s/__UDEPT_USE_DEFAULT_OFF__/(-)/g
 	'
 }
 
@@ -2018,6 +2319,7 @@ function raw_depends() {
 #
 function crunch_depends() {
 	local my_use; my_use="$(dbuse "$1")"
+	local crunch_cpv=$1
 	ordeps="$2" # carry through
 	local taint=""
 	while cd_evaluate_single; do :; done
@@ -2106,7 +2408,7 @@ function cd_discard_single() {
 # cd_already_installed: test whether all atoms in 'batom taint' lines on $1 resolve to an installed cpv (with blocker inversion).
 function cd_already_installed() {
 	echo "$1" | while read batom taint; do
-		if [[ "$(resolve_depatom "${batom#!}" "yes" 2>/dev/null)" ]]
+		if [[ "$(resolve_depatom "${batom##+(!)}" "yes" "$crunch_cpv" 2>/dev/null)" ]]
 		then
 			[[ "${batom:0:1}" != "!" ]] || return 1
 		else
@@ -2117,7 +2419,11 @@ function cd_already_installed() {
 # cd_satisfiable: test whether all atoms in 'batom taint' lines on $1 resolve to *some* cpv (installed or available).
 function cd_satisfiable() {
 	echo "$1" | while read batom taint; do
-		[[ "$(resolve_depatom ${batom#!} 2>/dev/null)" ]] || return 1
+		if [[ "$batom" == !* ]]; then
+			[[ -z "$(resolve_depatom "${batom##+(!)}" yes "$crunch_cpv" 2>/dev/null)" ]] || return 1
+		else
+			[[ "$(resolve_depatom "$batom" "" "$crunch_cpv" 2>/dev/null)" ]] || return 1
+		fi
 	done
 }
 # cd_is_in_use: test whether use selector $1 (optionally !-prefixed) matches the caller's $my_use list.
@@ -2337,15 +2643,15 @@ function _smartdep() {
 	# raw_depends now preserves these in the token stream; the regex used
 	# to require a literal space immediately after the atom which would
 	# silently miss every slot-bearing depatom.
-	local slot_suffix='\(:[^][[:space:]]*\)\?'
+	local atom_suffix='\(:[^][[:space:]]*\)\?\(::[[:alnum:]_.+-]*\)\?\(\[[^]]*\]\)\?'
 	potential_revdepends $needle \
 	| while read deppkg; do
 		has $deppkg $exclude && continue
-		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"' ' \
+		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"' ' \
 		| while read depatom taint; do
-			if dep_satisfies_slot "${ncpv}" "$depatom"; then
+			if dep_satisfies_atom "${ncpv}" "$depatom" "" "" "$deppkg"; then
 				if ! echo "${cands}" | while read candidate; do
-					dep_satisfies_slot "${needle}-${candidate}" "$depatom" && break
+					dep_satisfies_atom "${needle}-${candidate}" "$depatom" "" "" "$deppkg" && break
 				done; then
 					echo $deppkg $depatom $taint
 					[[ "$exclude" ]] && return 1
@@ -2356,12 +2662,12 @@ function _smartdep() {
 			fi
 		done || return 1
 	done || return 0
-	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
+	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"'[[:space:]]*$' \
 	| while read depatom; do
 		depatom=${depatom#\*}
-		if dep_satisfies_slot "$ncpv" "$depatom"; then
+		if dep_satisfies_atom "$ncpv" "$depatom"; then
 			if ! echo "${cands}" | while read candidate; do
-				dep_satisfies_slot "${needle}-${candidate}" "$depatom" && break
+				dep_satisfies_atom "${needle}-${candidate}" "$depatom" && break
 			done; then
 				echo SYSTEM $depatom
 				break
@@ -2369,11 +2675,11 @@ function _smartdep() {
 		fi
 	done
 	{ cat ${WORLD_FILE}; world_sets_expand; } \
-	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
+	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"'[[:space:]]*$' \
 	| while read depatom; do
-		if dep_satisfies_slot "$ncpv" "$depatom"; then
+		if dep_satisfies_atom "$ncpv" "$depatom"; then
 			if ! echo "${cands}" | while read candidate; do
-				dep_satisfies_slot "${needle}-${candidate}" "$depatom" && break
+				dep_satisfies_atom "${needle}-${candidate}" "$depatom" && break
 			done; then
 				echo WORLD $depatom
 				break
@@ -2398,19 +2704,19 @@ function _smartdep_nopv () {
 	# Slot-agnostic: target is a cp with no version, so we can't pin a
 	# specific SLOT for filtering. The regex still has to *tolerate*
 	# slots in the token stream now that raw_depends preserves them.
-	local slot_suffix='\(:[^][[:space:]]*\)\?'
+	local atom_suffix='\(:[^][[:space:]]*\)\?\(::[[:alnum:]_.+-]*\)\?\(\[[^]]*\]\)\?'
 	potential_revdepends ${needle} "$exclude" \
 	| while read deppkg; do
-		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"' ' \
+		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"' ' \
 		| if read depatom taint; then
 			echo $deppkg $depatom $taint
 			[[ -z "$exclude" ]] || return 1
 		fi
 	done || return 0
-	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
+	echo "${allprofilepackages}" | grep '^\*\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"'[[:space:]]*$' \
 	| if read depatom; then echo SYSTEM $depatom; fi
 	{ cat ${WORLD_FILE}; world_sets_expand; } \
-	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${slot_suffix}"'[[:space:]]*$' \
+	| grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"'[[:space:]]*$' \
 	| if read depatom; then echo WORLD $depatom; fi
 	for virtual in $(virtuals_from $needle); do
 		_smartdep_nopv "$virtual" "yes" "$exclude" "$ordeps"
@@ -2450,24 +2756,24 @@ memoise pv_to_cpv
 # _resolve_depatom_inner_virtual: resolve_depatom helper: try v_cpv (a virtual provider) against operator/version, emit cpv on first hit.
 function _resolve_depatom_inner_virtual() {
 	v_cp="${v_cpv%-$VER_SHPAT?(\*)}"; v_mlsr="${v_cpv#${v_cp}?(-)}"
-	provided_and_avail $v_cp "$installed_only" \
-	| while read t_mlsr; do
+	while read t_mlsr; do
+		[[ "$t_mlsr" ]] || continue
 		{ [[ -z "$v_mlsr" ]] || dep_satisfies_mlsr "$t_mlsr" "$vs" "$v_mlsr"; }\
 			&& { [[ -z "$d_mlsr" ]] || dep_satisfies_mlsr \
 				"$(virtual_version $v_cp $t_mlsr $d_cp)" "$vs" "$d_mlsr"; } \
-			&& { echo "$v_cp-$t_mlsr"; return 1; }
-	done || return 0
+			&& { echo "$v_cp-$t_mlsr"; return 0; }
+	done <<<"$(provided_and_avail "$v_cp" "$installed_only")"
 	return 1
 }
 
 # _resolve_depatom_inner: resolve_depatom helper: try direct cp matches first, then walk allvirtuals for indirect providers.
 function _resolve_depatom_inner() {
 	d_cp="${d_cpv/%-$VER_SHPAT?(\*)}"; d_mlsr="${d_cpv##${d_cp}?(-)}"
-	provided_and_avail $d_cp "$installed_only" \
-	| while read t_mlsr; do 
-		{ [[ -z "$d_mlsr" ]] || dep_satisfies_mlsr "$t_mlsr" "$vs" "$d_mlsr"; }\
-			&& { echo "$d_cp-$t_mlsr"; return 1; }
-	done || return 0
+	while read t_mlsr; do
+		[[ "$t_mlsr" ]] || continue
+		dep_satisfies_atom "$d_cp-$t_mlsr" "$resolve_atom" "" "" "$resolve_parent" \
+			&& { echo "$d_cp-$t_mlsr"; return 0; }
+	done <<<"$(provided_and_avail "$d_cp" "$installed_only")"
 	for v_cpv in $(allvirtuals | sed 's!^'"$d_cp"' \(.*\)$!\1!;t;d'); do
 		_resolve_depatom_inner_virtual && return 0
 	done
@@ -2476,20 +2782,18 @@ function _resolve_depatom_inner() {
 
 # resolve_depatom: echo first cpv satisfying depatom $1 (installed-only when $2); slot-agnostic, memoised.
 function resolve_depatom() {
-	depatom="$1"; installed_only="$2"
+	depatom="$1"; installed_only="$2"; resolve_parent="$3"; resolve_atom="$1"
 	set_xterm_title "Resolving dependency: $depatom"
-	# resolve_depatom answers "is this depatom satisfied by anything?" — a
-	# slot-agnostic question. Strip slot/sub-slot/operator suffixes here so
-	# downstream parsing (which expects bare cat/pkg[-version[*]]) doesn't
-	# trip on the slots that raw_depends now preserves in the token stream.
-	depatom="${depatom%%:*}"
-	d_cpv="${depatom/#@(<|<=|=|~|>=|>)}"; vs="${depatom%${d_cpv}}"
+	atom_parse "$depatom" || { format_error <<<"Invalid depatom $depatom" >&2; return 1; }
+	d_cp=$ATOM_CP; d_mlsr=$ATOM_VERSION; vs=$ATOM_OP; d_cpv=$d_cp${d_mlsr:+-$d_mlsr}
 	if [[ "$d_cpv" == */* ]]; then
 		_resolve_depatom_inner && return 0
 	else
-		pv_to_cpv $d_cpv | while read d_cpv; do
-			_resolve_depatom_inner && return 1
-		done || return 0
+		while read d_cpv; do
+			[[ "$d_cpv" ]] || continue
+			resolve_atom=$d_cpv
+			_resolve_depatom_inner && return 0
+		done <<<"$(pv_to_cpv "$d_cpv")"
 	fi
 	format_error <<<"Cannot resolve depatom $depatom" >&2
 	echo "${FUNCNAME[@]}" >&2
@@ -3446,16 +3750,22 @@ pkgsize_tbytes=0
 function info_action_size() {
 	cpv="$1"
 	set_xterm_title "Calculating disk usage of $cpv..."
-	local files=0 bytes=0 inacc=0
-	(( ++pkgsize_totals_pkgs ))
-	for file in $(sed -e "s:^obj \(.*\) [[:xdigit:]]\+ [[:digit:]]\+$:\1:;
-		s:^sym \(.*\) -> \(.*\) .*$:\1:;
-		s:^dir \(.*\)$:\1:" \
-		${VARDB_DIR}/$cpv/CONTENTS); do
+	local files=0 bytes=0 inacc=0 file entry
+	while IFS= read -r entry || [[ "$entry" ]]; do
+		case "$entry" in
+			obj\ *)
+				[[ "$entry" =~ ^obj\ (.*)\ [[:xdigit:]]+\ [[:digit:]]+$ ]] || continue
+				file=${BASH_REMATCH[1]};;
+			sym\ *)
+				[[ "$entry" =~ ^sym\ (.*)\ -\>\ .*\ [[:digit:]]+$ ]] || continue
+				file=${BASH_REMATCH[1]};;
+			dir\ *) file=${entry#dir };;
+			*) continue;;
+		esac
 		(( ++files ))
-		[[ -r "$file" ]] && (( bytes += $(stat -c%s "$file") )) \
+		[[ -r "$file" ]] && (( bytes += $(stat -c%s -- "$file") )) \
 			|| (( ++inacc ))
-	done
+	done <"${VARDB_DIR}/$cpv/CONTENTS"
 	(( inacc > 0 )) \
 		&& finacc=" (${BR}$inacc${NO} inaccessible)" || finacc=""
 	echo "${BR}$files${NO} files$finacc: ${BR}$(format_bytes $bytes)${NO}"
@@ -3847,52 +4157,109 @@ function userquery() {
 # === bashrc_filter, filter_etc_portage, print_stats, ask_install_new_file.
 # ============================================================================
 
-# install_new_file: cat $1 over $2; write directly when root or the target is already writable, else escalate via doas/sudo/su; printf %q quoted to defend special chars.
+# _path_is_within: true when canonical path $1 is root $2 or below it.
+function _path_is_within() {
+	local path=${1%/} root=${2%/}
+	[[ -n "$root" ]] || root=/
+	[[ "$root" == / ]] || [[ "$path" == "$root" || "$path" == "$root/"* ]]
+}
+
+# _resolve_install_target: canonicalise a write target and enforce the root
+# boundary. Existing symlinks are preserved by atomically replacing their
+# referent; dangling/cyclic or out-of-root links are rejected.
+function _resolve_install_target() {
+	local target=$1 root=$2 resolved canonical_root
+	canonical_root=$(realpath -m -- "$root") || return 1
+	if [[ -L "$target" ]]; then
+		resolved=$(readlink -f -- "$target") || {
+			format_error <<<"refusing dangling or cyclic symlink '$target'" >&2
+			return 1
+		}
+		[[ -e "$resolved" ]] || {
+			format_error <<<"refusing dangling or cyclic symlink '$target'" >&2
+			return 1
+		}
+	else
+		resolved=$(realpath -m -- "$target") || return 1
+	fi
+	_path_is_within "$resolved" "$canonical_root" || {
+		format_error <<<"refusing write through '$target' outside '$canonical_root'" >&2
+		return 1
+	}
+	[[ ! -e "$resolved" || -f "$resolved" ]] || {
+		format_error <<<"refusing to replace non-regular file '$target'" >&2
+		return 1
+	}
+	printf '%s\n' "$resolved"
+}
+
+# _install_new_file_atomic: copy candidate content to a same-directory
+# temporary, retain the target's metadata, validate and flush it, then rename.
+# The old file remains intact on every failure before mv(1).
+function _install_new_file_atomic() {
+	local new=$1 target=$2 dir base tmp rc
+	[[ -f "$new" && -r "$new" ]] || return 1
+	dir=${target%/*}; [[ "$dir" == "$target" ]] && dir=.
+	base=${target##*/}
+	tmp=$(mktemp -- "$dir/.${base}.udept.XXXXXX") || return 1
+	if [[ -e "$target" ]]; then
+		cp --preserve=all -- "$target" "$tmp" || {
+			rc=$?; command rm -f -- "$tmp"; return "$rc"
+		}
+	fi
+	cat -- "$new" >"$tmp" || {
+		rc=$?; command rm -f -- "$tmp"; return "$rc"
+	}
+	# Rewriting content updates mtime; udept historically retained target
+	# metadata, so restore timestamps after the content copy as well.
+	if [[ -e "$target" ]]; then
+		touch -r "$target" -- "$tmp" || {
+			rc=$?; command rm -f -- "$tmp"; return "$rc"
+		}
+	fi
+	cmp -s -- "$new" "$tmp" || {
+		command rm -f -- "$tmp"; return 1
+	}
+	sync -f -- "$tmp" 2>/dev/null || sync
+	mv -f -- "$tmp" "$target" || {
+		rc=$?; command rm -f -- "$tmp"; return "$rc"
+	}
+	sync -f -- "$dir" 2>/dev/null || true
+}
+
+# install_new_file: safely replace $2 with $1.  Direct writes and elevated
+# writes use the same atomic helper; elevation is attempted once, so a denied
+# authentication cannot create an unbounded prompt loop.
 function install_new_file() {
-	local new="$1" target="$2"
-	# Already root: no privilege escalation needed.
-	if (( EUID == 0 )); then
-		cat -- "$new" >"$target"
+	local new=$1 target=$2 root resolved helper quoted
+	case "$target" in
+		"$ETC_PORTAGE_DIR"|"$ETC_PORTAGE_DIR"/*)
+			root="${PORTAGE_CONFIGROOT}${EPREFIX}"
+			[[ "$root" ]] || root=/;;
+		"$PORTAGE_LIB_DIR"|"$PORTAGE_LIB_DIR"/*) root=${EROOT:-/};;
+		*) root=${UDEPT_WRITE_ROOT:-${target%/*}};;
+	esac
+	[[ "$root" ]] || root=.
+	resolved=$(_resolve_install_target "$target" "$root") || return 1
+	if (( EUID == 0 )) || [[ -w "$resolved" ]] \
+		|| { [[ ! -e "$resolved" ]] && [[ -w "${resolved%/*}" ]]; }; then
+		_install_new_file_atomic "$new" "$resolved"
 		return $?
 	fi
-	# Non-root, but the target may already be ours to write: an existing
-	# writable file, or a new file in a writable directory. Write directly
-	# in that case rather than escalating — this avoids spurious doas/sudo
-	# prompts and root-owned files when dep runs against a user-owned tree
-	# (a non-root EROOT, a test sandbox, ...). Escalate only when the
-	# target genuinely isn't ours to write.
-	if [[ -w "$target" ]] || { [[ ! -e "$target" ]] && [[ -w "${target%/*}" ]]; }; then
-		cat -- "$new" >"$target"
-		return $?
-	fi
-	# Build a safely-quoted command for the elevation tool (printf %q
-	# defends against paths that contain spaces, quotes, $-substitutions,
-	# command substitutions, etc.). Prefer sudo when it's available; fall
-	# back to su.
-	local quoted_new quoted_target cmd
-	quoted_new=$(printf '%q' "$new")
-	quoted_target=$(printf '%q' "$target")
-	cmd="cat -- $quoted_new >$quoted_target"
-	local elevate
+
+	helper="$(declare -f _install_new_file_atomic); _install_new_file_atomic \"\$1\" \"\$2\""
 	if command -v doas >/dev/null 2>&1; then
-		elevate=( doas sh -c )
+		doas bash -c "$helper" _ "$new" "$resolved"
 	elif command -v sudo >/dev/null 2>&1; then
-		elevate=( sudo sh -c )
+		sudo bash -c "$helper" _ "$new" "$resolved"
 	elif command -v su >/dev/null 2>&1; then
 		echo "Please enter your root password or Ctrl+C, Enter to cancel."
-		elevate=( su -c )
+		printf -v quoted 'bash -c %q _ %q %q' "$helper" "$new" "$resolved"
+		su -c "$quoted"
 	else
 		format_error >&2 <<<"no doas/sudo/su found; cannot install '$target' as root"
 		return 1
 	fi
-	while :; do
-		"${elevate[@]}" "$cmd"
-		case $? in
-			0) return 0;;
-			1) continue;;
-			*) return 1;;
-		esac
-	done
 }
 
 # filter_world: pruneworld: drop entries from $WORLD_FILE whose reverse-tree is empty, then ask_install_new_file the rewrite.

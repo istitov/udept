@@ -40,9 +40,11 @@ requirements:
    autoreconf -i
    ./configure
    make
-   make check           # bats unit suite (200 tests, all stubbed)
-   make check-smoke     # bats smoke tier (41 tests, real Portage tree)
+   make check           # bats unit suite (286 tests)
+   make check-smoke     # bats smoke tier (43 tests, real Portage tree)
    make check-properties # bats property tier (11 tests, transform invariants)
+   make check-oracle    # Bash matcher vs Python Portage (test-only oracle)
+   make check-dist-inventory # source and release tar carry identical tests
    ```
 
    `make check-smoke` needs a populated `/var/db/pkg` and the real
@@ -72,15 +74,14 @@ requirements:
    make distcheck
    ```
 
-   CI runs all three bats tiers, `shellcheck --severity=error src/dep`,
+   CI runs all three bats tiers, the Portage oracle, test-inventory check,
+   `shellcheck --severity=warning src/dep`,
    completion-file syntax checks (`bash -n` / `zsh -n`), and `make
    distcheck` on `gentoo/stage3:latest`. New code paths need at
    least one test.
 
-2. **`shellcheck --severity=error src/dep` clean.** CI enforces this
-   threshold; the local [`.shellcheckrc`](.shellcheckrc) honours the
-   same baseline. Lower-severity findings are tracked for a future
-   cleanup pass but don't block.
+2. **`shellcheck --severity=warning src/dep` clean.** CI and the local
+[`.shellcheckrc`](.shellcheckrc) enforce the same correctness baseline.
 
 Two patterns in `src/dep.in` deliberately keep `# shellcheck
 disable=...` directives:

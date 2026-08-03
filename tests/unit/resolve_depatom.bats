@@ -25,6 +25,7 @@ setup() {
 	provided_and_avail() { :; }
 	pv_to_cpv() { :; }
 	allvirtuals() { :; }
+	slot_for() { echo '0/2'; }
 }
 
 # Most tests call the un-memoised function directly. Convenience wrapper.

@@ -187,9 +187,13 @@ fake_install_with_slot() {
 }
 
 @test "dep_satisfies_slot: USE-deps after slot don't disturb slot extraction" {
-	run dep_satisfies_slot 'cat/pkg-1.0' 'cat/pkg:0[use1,!use2]' '0'
+	fake_install_with_slot 'cat/pkg-1.0' '0'
+	printf 'use1 use2\n' >"$VARDB_DIR/cat/pkg-1.0/IUSE"
+	printf 'use1\n' >"$VARDB_DIR/cat/pkg-1.0/USE"
+	opt_arg_original_depends=yes
+	run dep_satisfies_slot 'cat/pkg-1.0' 'cat/pkg:0[use1,-use2]' '0'
 	assert_success
-	run dep_satisfies_slot 'cat/pkg-1.0' 'cat/pkg:1[use1,!use2]' '0'
+	run dep_satisfies_slot 'cat/pkg-1.0' 'cat/pkg:1[use1,-use2]' '0'
 	assert_failure
 }
 

@@ -10,9 +10,11 @@ Upstream is dormant (last release ~2006, Portage internals have moved on). When 
 
 ## Build / install
 
-Standard autotools. The repo is generated: `configure` and `Makefile.in` are checked in.
+Standard autotools. `configure`, `Makefile.in`, and the built scripts are
+generated and ignored; release tarballs include them.
 
 ```sh
+autoreconf -i
 ./configure              # --disable-bash-completion / --disable-zsh-completion
                          # to skip either completion file
 make                     # builds src/dep, doc/dep.1, completion/dep, completion/_dep
@@ -28,11 +30,17 @@ To regenerate autotools output after editing `configure.ac` or `Makefile.am`: `a
 
 ## Tests
 
-Two complementary layers, both run by CI (`.github/workflows/ci.yml`).
+Four complementary layers run by CI (`.github/workflows/ci.yml`): unit,
+property-invariant, real-tree smoke, and a Python-Portage differential oracle.
 
 **Bats unit suite** (`tests/unit/*.bats`, run by `make check`). Sources `src/dep.in` and exercises individual helpers (`dep_satisfies`, `dep_to_cps`, `format_atom_for_emerge`, `world_sets_expand`, `slot_satisfies`/`dep_satisfies_slot`, `eval_ru_list` for REQUIRED_USE, etc.) in isolation. Each `@test` runs in a fresh bash subprocess so script-level state (`$temp_dir`, memoised function caches) doesn't leak. Helper at `tests/unit/test_helper.bash` defines `load_dep` which sources the script with errexit disabled (the script's tail uses `((counter++))` patterns that abort sourcing under `set -e`).
 
-**Smoke harness** (`tests/smoke.sh`, run by `make smoke` / wrapped by `make smoke-baseline` / `make smoke-diff`). Runs a fixed battery of `dep` invocations against the host's live Portage tree — primary databases at `/var/db/pkg` (vardb), `/var/db/repos/<repo>/metadata/md5-cache` (md5-cache, the modern equivalent of the old `/var/cache/edb/dep`), `/etc/portage`. Emits a stable diffable snapshot to stdout. Not a correctness check — assertions are limited to "doesn't crash" and "shape doesn't change unexpectedly". `tests/smoke-diff.sh` is a tolerance-aware diff helper that filters volatile header lines (timestamp, host kernel, cpv-resolution summary) before comparing baseline vs. snapshot. CI uploads the snapshot as an artifact and (when `tests/baseline.ci` is committed) diffs against it.
+**Property, smoke, and oracle tiers.** `make check-properties` drives real
+filters over synthetic copies; `make check-smoke` runs Bats assertions on the
+host Portage tree; `make check-oracle` compares deterministic atom matches for
+at least 100 installed and 100 visible CPVs with Python Portage. Python is a
+test oracle only and is never imported by `dep`. The older `tests/smoke.sh`
+snapshot remains available through `make smoke*` for output-diff work.
 
 For ad-hoc verification, running `./src/dep <flags>` against the live tree is still useful and cheap.
 
@@ -54,7 +62,7 @@ The script guards its tail with `[[ "$0" == */dep ]] && main`, and `--exec` shor
 
 - Indentation is tabs at width 4 (see the `vim:set ts=4 sw=4` modeline at the top). Match it.
 - Heavy use of `extglob` patterns (`@(...)`, `+(...)`, `?(...)`); the script enables `shopt -s extglob` at load.
-- Output is colorized via `$NO`, `$BR`, `$RD`, `$GR`, etc. — set up once based on `--colour=auto|yes|no|html`. Never write raw escape codes; always use the named vars so `--colour=no` and `--colour=html` keep working.
+- Output is colorized via `$NO`, `$BR`, `$RD`, `$GR`, etc. HTML mode runs the ANSI stream through `html_render_stream`; never emit ad-hoc markup.
 - Errors go through `format_error` to stderr; user-facing diagnostics through `log_message <verbosity> <msg>`.
 - Word-wrapping for help text uses the in-script `fmt_w`; help text gets ANSI-colorized via `help_fmt` (regex-based, runs over the rendered help).
 - Functions return data either via stdout (pipeline-friendly) or via the `$RESULT` array (when the result is structured). Don't mix.

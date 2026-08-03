@@ -21,7 +21,7 @@ resolution.
 
 Most Portage tooling lives in Python (`emerge`, `equery` /
 `gentoolkit`, `pquery` / `pkgcore`) or C++ (`eix`). udept is an oddity
-— a Portage analysis engine that is itself a single ~3500-line bash
+— a Portage analysis engine that is itself a single ~5000-line bash
 script.
 
 The trade-offs:
@@ -159,6 +159,23 @@ disclosure as for 0.7.1.
 
 See `ChangeLog` for the full per-release history.
 
+The **0.8.0** release (2026), "Trust, but Verify", hardens the places
+where a read-only analysis error could become unsafe advice or a damaged
+configuration. HTML output now passes through one escaping renderer;
+dependency resolution uses one EAPI 8 matcher for versions, slots,
+repositories, and USE dependencies; virtual and effective-USE evaluation
+cover all visible ebuilds and active USE_ORDER components; explicit EROOT,
+EPREFIX, and PORTAGE_CONFIGROOT values are authoritative; and CONTENTS
+paths containing whitespace are parsed as fields rather than shell words.
+
+Mutating actions are now dry-run by default. Use `--ask` for an interactive
+apply or the new long-only `--force` for a non-interactive apply. File
+replacement is same-directory and atomic, preserves metadata and valid
+in-root symlinks, and rejects dangling or out-of-root symlinks. A Python
+Portage differential suite is test-only: the Bash runtime remains
+self-contained, while CI checks hundreds of real atom/candidate decisions
+against Portage itself.
+
 ## Other known repositories
 
 - [init-6/udept](https://gitlab.com/init-6/udept) on GitLab — the
@@ -214,12 +231,16 @@ dep -F /usr/bin/emerge
 dep -e bash
 dep -k bash
 
-# Show entries in the world file that another installed package
-# already depends on (candidates for pruning):
-dep --pruneworld --pretend
+# Preview entries in the world file that another installed package
+# already depends on (dry-run is the default):
+dep --pruneworld
+
+# Review interactively, or apply non-interactively:
+dep --pruneworld --ask
+dep --pruneworld --force
 
 # Trim redundant entries from /etc/portage/package.{use,keywords,...}:
-dep --filter-etc-portage --pretend
+dep --filter-etc-portage
 
 # In a personal overlay: list ebuilds that no installed package wants
 # and that are not the most recent visible version:
@@ -232,14 +253,19 @@ language `dep` understands.
 
 ## Testing
 
-There is a smoke harness at `tests/smoke.sh` that runs a representative
-set of `dep` invocations against the current system's Portage state and
-captures their output for diffing against a baseline. It does not assert
-correctness, only stability:
+The test matrix has four complementary gates: 286 isolated Bats unit tests,
+11 property-invariant tests for configuration transforms, 43 smoke tests
+against a real Portage tree, and `make check-oracle`, which compares at least
+100 installed plus 100 visible CPVs against Python Portage. The older
+`tests/smoke.sh` harness also captures a diffable host snapshot:
 
 ```sh
-tests/smoke.sh -o /tmp/snapshot         # produce a snapshot
-diff -u tests/baseline.phase16 /tmp/snapshot  # compare to last baseline
+make check
+make check-properties
+make check-smoke
+make check-oracle
+make check-dist-inventory
+make distcheck
 ```
 
 This is what the modernization phases were validated against; baselines
@@ -251,5 +277,5 @@ for each phase live in `tests/`.
 &lt;ed@catmur.co.uk&gt; and contributors. The 0.6.0 modernization was carried
 out by Ivan S. Titov.
 
-Distributed under the terms of the GNU General Public License
-version 3 — see `LICENSE`. NO WARRANTY.
+Distributed under the terms of the GNU General Public License version 3 or
+later — see `LICENSE`. NO WARRANTY.

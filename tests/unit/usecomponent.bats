@@ -150,20 +150,22 @@ EOF
 	[[ -z "$output" ]]
 }
 
-# --- Phase-4 placeholders ------------------------------------------------
-# features and repo are intentional placeholders (TODO at the case site);
-# pin their no-op behaviour so a future fix here is deliberate.
-
-@test "usecomponent features: empty output (phase-4 placeholder)" {
-	run usecomponent features ''
+@test "usecomponent features: FEATURES=test forces USE=test" {
+	FEATURES='sandbox test userpriv'
+	run usecomponent features cat/pkg-1
 	[ "$status" -eq 0 ]
-	[[ -z "$output" ]]
+	[[ "$output" == test ]]
 }
 
-@test "usecomponent repo: empty output (phase-4 placeholder)" {
-	run usecomponent repo ''
+@test "usecomponent repo: repository make.defaults contributes USE" {
+	local repo="$BATS_TEST_TMPDIR/repo"
+	mkdir -p "$repo/profiles" "$repo/cat/pkg"
+	printf '%s\n' 'USE="repo-flag -other"' >"$repo/profiles/make.defaults"
+	portage_trees="$repo"
+	PORTDIR="$repo"
+	run usecomponent repo cat/pkg-1
 	[ "$status" -eq 0 ]
-	[[ -z "$output" ]]
+	[[ "$output" == 'repo-flag -other' ]]
 }
 
 # --- Unknown component ---------------------------------------------------

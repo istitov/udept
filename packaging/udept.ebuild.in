@@ -7,7 +7,7 @@ DESCRIPTION="A Portage analysis toolkit, written in bash"
 HOMEPAGE="https://github.com/istitov/udept"
 SRC_URI="https://github.com/istitov/udept/releases/download/${PV}/${P}.tar.xz"
 
-LICENSE="GPL-3"
+LICENSE="GPL-3+"
 SLOT="0"
 KEYWORDS="~amd64 ~x86"
 IUSE="+bash-completion +zsh-completion test"
@@ -17,6 +17,7 @@ RDEPEND="
 	>=app-shells/bash-4.2:0
 	>=sys-apps/portage-2.3.0
 	bash-completion? ( app-shells/bash-completion )
+	zsh-completion? ( app-shells/zsh )
 "
 BDEPEND="
 	>=app-shells/bash-4.2:0
@@ -36,5 +37,6 @@ src_configure() {
 }
 
 src_test() {
-	bats tests/unit/ || die "bats unit tests failed"
+	emake check || die "bats unit tests failed"
+	emake check-oracle || die "Portage oracle failed"
 }

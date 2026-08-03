@@ -1,3 +1,15 @@
+0.8.0 "Trust, but Verify" (20260803)
+
+	Feature-preserving hardening release. HTML output now has one safe
+	escaping boundary; mutating actions default to dry-run and use atomic,
+	metadata-preserving replacement; dependency decisions share an EAPI 8
+	matcher for versions, slots, repositories, and USE dependencies; and
+	effective USE/virtual resolution covers the command-used semantics.
+	Explicit root variables and whitespace-bearing CONTENTS paths are fixed.
+	A test-only Python Portage oracle gates hundreds of installed/visible
+	atom decisions, and release archives must carry the exact source test
+	inventory. No command or feature was removed.
+
 0.7.5 "Same Difference" (20260609)
 
 	Patch release.  More fixes from the per-flag shakeout — a
@@ -651,4 +663,3 @@
 	* lost in the mists of time
 
 0.3.00 "Level Of Incompetence" (20040228)
-
