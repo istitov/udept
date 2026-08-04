@@ -24,6 +24,16 @@ setup() {
 	assert_equal "$ATOM_USE" 'foo,-baz'
 }
 
+@test "structured atom parser rejects malformed suffixes and operators" {
+	local atom
+	for atom in \
+		'cat/pkg[foo' 'cat/pkg[]' 'cat/pkg::' 'cat/pkg:' \
+		'cat/pkg:::repo' '>=cat/pkg' 'cat/pkg extra' 'cat/pkg/extra'; do
+		run atom_parse "$atom"
+		assert_failure
+	done
+}
+
 @test "shared matcher enforces version slot repository and USE" {
 	run dep_satisfies_atom cat/pkg-2.0 '>=cat/pkg-1.0:0/2=::testrepo[foo,-baz]'
 	assert_success

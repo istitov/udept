@@ -39,6 +39,7 @@ EXTRA_DIST = \
 	tests/unit/extract_var.bats \
 	tests/unit/allvirtuals.bats \
 	tests/unit/memoise.bats \
+	tests/unit/virtual_version.bats \
 	tests/unit/info_action_changelog.bats \
 	tests/unit/makeideal.bats \
 	tests/smoke/test_helper.bash \

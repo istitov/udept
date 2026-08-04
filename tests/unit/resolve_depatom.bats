@@ -139,6 +139,25 @@ do_resolve() {
 	assert_output 'cat2/pkg-1.0'
 }
 
+@test "resolve_depatom: bare PN retains its slot while trying categories" {
+	pv_to_cpv() { echo "cat1/$1"; echo "cat2/$1"; }
+	provided_and_avail() { echo 1.0; }
+	slot_for() {
+		[[ $1 == cat1/* ]] && echo 1 || echo 0
+	}
+	run do_resolve 'pkg:0'
+	assert_success
+	assert_output 'cat2/pkg-1.0'
+}
+
+@test "resolve_depatom: bare version retains its comparison operator" {
+	pv_to_cpv() { echo "cat/$1"; }
+	provided_and_avail() { echo 2.0; echo 1.0; }
+	run do_resolve '>=pkg-1.0'
+	assert_success
+	assert_output 'cat/pkg-2.0'
+}
+
 @test "resolve_depatom: virtual fallback when direct provided_and_avail empty" {
 	# Direct lookup: nothing.
 	# allvirtuals: 'cat/pkg' is provided by 'virtual/foo'. The virtual

@@ -1244,23 +1244,32 @@ function dep_satisfies_mlsr() {
 # USE-dependency fields.  Results use the ATOM_* prefix so callers can copy
 # the fields they need before invoking helpers which may parse another atom.
 function atom_parse() {
-	local atom=$1 body
+	local atom=$1 body prefix
 	# ATOM_RAW and ATOM_BLOCKER are part of the parser interface used by
 	# diagnostics/tests even though the matcher does not need them directly.
 	# shellcheck disable=SC2034
 	ATOM_RAW=$atom ATOM_BLOCKER='' ATOM_OP='' ATOM_CP='' ATOM_VERSION=''
 	ATOM_SLOT='' ATOM_REPO='' ATOM_USE=''
+	[[ "$atom" && "$atom" != *[[:space:]]* ]] || return 1
 	# shellcheck disable=SC2034
 	case "$atom" in !!*) ATOM_BLOCKER=!!; atom=${atom#!!};; !*) ATOM_BLOCKER=!; atom=${atom#!};; esac
-	if [[ "$atom" == *\[*\] ]]; then
+	[[ "$atom" && "$atom" != !* ]] || return 1
+	if [[ "$atom" == *\[* || "$atom" == *\]* ]]; then
+		[[ "$atom" == *\[*\] ]] || return 1
 		ATOM_USE=${atom##*\[}; ATOM_USE=${ATOM_USE%\]}
+		[[ "$ATOM_USE" && "$ATOM_USE" != *\[* && "$ATOM_USE" != *\]* ]] || return 1
 		atom=${atom%%\[*}
 	fi
 	if [[ "$atom" == *::* ]]; then
-		ATOM_REPO=${atom##*::}; atom=${atom%%::*}
+		prefix=${atom%%::*}; ATOM_REPO=${atom#*::}
+		[[ "$prefix" != *::* && "$ATOM_REPO" =~ ^[[:alnum:]_.+-]+$ ]] || return 1
+		atom=$prefix
 	fi
 	if [[ "$atom" == *:* ]]; then
 		ATOM_SLOT=${atom##*:}; atom=${atom%%:*}
+		[[ "$atom" != *:* \
+			&& "$ATOM_SLOT" =~ ^([[:alnum:]_.+-]+(/[[:alnum:]_.+-]+)?=?|[=*])$ ]] \
+			|| return 1
 	fi
 	case "$atom" in
 		'>='*|'<='*) ATOM_OP=${atom:0:2}; body=${atom:2};;
@@ -1275,7 +1284,9 @@ function atom_parse() {
 		# operator for versioned atoms.
 		[[ "$ATOM_OP" ]] || ATOM_OP='='
 	fi
-	[[ "$ATOM_CP" ]]
+	[[ "$ATOM_CP" =~ ^([[:alnum:]_+.-]+/)?[[:alnum:]_+.-]+$ ]] || return 1
+	[[ -z "$ATOM_OP" || "$ATOM_VERSION" ]] || return 1
+	return 0
 }
 
 function repo_name_for_tree() {
@@ -2211,7 +2222,7 @@ function virtuals_from() {
 # $virtual, what mlsr should we ascribe to the virtual?" is just the
 # provider's own mlsr — there's no separate virtual-version contour.
 function virtual_version() {
-	local cp=$1 mlsr=$2 virtual=$3
+	local cp=$1 mlsr=$2 virtual=$3 v
 	for v in $(virtuals_from "$cp"); do
 		[[ "$v" == "$virtual" ]] && { echo "$mlsr"; return 0; }
 	done
@@ -2915,13 +2926,18 @@ function resolve_depatom() {
 	depatom="$1"; installed_only="$2"; resolve_parent="$3"; resolve_atom="$1"
 	set_xterm_title "Resolving dependency: $depatom"
 	atom_parse "$depatom" || { format_error <<<"Invalid depatom $depatom" >&2; return 1; }
+	local input_blocker=$ATOM_BLOCKER input_op=$ATOM_OP input_slot=$ATOM_SLOT
+	local input_repo=$ATOM_REPO input_use=$ATOM_USE
 	d_cp=$ATOM_CP; d_mlsr=$ATOM_VERSION; vs=$ATOM_OP; d_cpv=$d_cp${d_mlsr:+-$d_mlsr}
 	if [[ "$d_cpv" == */* ]]; then
 		_resolve_depatom_inner && return 0
 	else
 		while read d_cpv; do
 			[[ "$d_cpv" ]] || continue
-			resolve_atom=$d_cpv
+			resolve_atom="${input_blocker}${input_op}${d_cpv}"
+			[[ "$input_slot" ]] && resolve_atom="${resolve_atom}:${input_slot}"
+			[[ "$input_repo" ]] && resolve_atom="${resolve_atom}::${input_repo}"
+			[[ "$input_use" ]] && resolve_atom="${resolve_atom}[${input_use}]"
 			_resolve_depatom_inner && return 0
 		done <<<"$(pv_to_cpv "$d_cpv")"
 	fi

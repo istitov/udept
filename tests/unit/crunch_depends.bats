@@ -96,6 +96,14 @@ EOF
 	assert_output '!cat/blocker '
 }
 
+@test "crunch_depends: constrained atoms remain opaque tokens" {
+	run crunch <<'EOF'
+!!>=cat/pkg-2.0:0/2=::testrepo[foo(-)?,bar=]
+EOF
+	assert_equal "${#lines[@]}" 1
+	assert_output '!!>=cat/pkg-2.0:0/2=::testrepo[foo(-)?,bar=] '
+}
+
 @test "crunch_depends: empty input → no output" {
 	run crunch </dev/null
 	refute_output
