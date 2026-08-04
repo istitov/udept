@@ -253,8 +253,8 @@ language `dep` understands.
 
 ## Testing
 
-The test matrix has four complementary gates: 286 isolated Bats unit tests,
-11 property-invariant tests for configuration transforms, 43 smoke tests
+The test matrix has four complementary gates: 324 isolated Bats unit tests,
+11 property-invariant tests for configuration transforms, 47 smoke tests
 against a real Portage tree, and `make check-oracle`, which compares at least
 100 installed plus 100 visible CPVs against Python Portage. The older
 `tests/smoke.sh` harness also captures a diffable host snapshot:
@@ -268,8 +268,9 @@ make check-dist-inventory
 make distcheck
 ```
 
-This is what the modernization phases were validated against; baselines
-for each phase live in `tests/`.
+This is what the modernization phases were validated against. The repository
+keeps one portable CI snapshot at `tests/baseline.ci`; host-specific snapshots
+created by `make smoke-baseline` use the ignored `tests/baseline.local` path.
 
 ## Authors and license
 

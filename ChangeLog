@@ -10,9 +10,38 @@
 	atom decisions, and release archives must carry the exact source test
 	inventory. No command or feature was removed.
 
-	* docs: correct the generated manual's stale `--pretend`, world-path,
-	  and merge wording; document every verification tier in INSTALL; and
-	  make the generated roff warning-clean under `mandoc -T lint`.
+	* fix: preserve USE-qualified dependency atoms through reverse-dependency
+	  discovery and formatting. The shared matcher now applies version, slot,
+	  repository, and USE constraints consistently to dependency metadata,
+	  masks, package.use, package.accept_keywords, and CLI queries.
+	* fix: mirror Portage's effective USE precedence across active profiles,
+	  repositories and their masters, package rules, IUSE defaults, FEATURES,
+	  and environment overrides. Multi-flag records are normalized before
+	  stacking so removals and later overrides remain effective.
+	* fix: reject invalid EROOT, EPREFIX, and PORTAGE_CONFIGROOT values before
+	  dispatch. A standalone explicit EPREFIX now obtains its matching EROOT
+	  from Portage instead of combining Prefix configuration with host paths.
+	* fix: make configuration replacement same-directory and atomic, preserve
+	  available metadata and valid in-root symlinks, reject unsafe symlinks,
+	  validate staged content, and report the underlying write failure.
+	* fix: build virtual provider maps only from package- and keyword-visible
+	  ebuilds while retaining providers contributed by every visible version.
+	* fix: tighten slot/repository suffix recognition, consolidate repository
+	  discovery, and keep plain HTML escaping separate from ANSI/OSC
+	  translation. Carriage returns and inherited renderer markers can no
+	  longer bypass the HTML boundary.
+	* fix: harden value and predicate memoisation against redundant directory
+	  creation, oversized keys, and empty or malformed cached statuses.
+	* packaging: avoid pulling zsh solely for completion files, keep the live
+	  Portage oracle out of minimal-chroot src_test, and compare archives with
+	  the tracked test inventory rather than scratch files.
+	* tests: expand the Python Portage oracle across operators, cross-package
+	  mismatches, USE defaults and metadata lookups; isolate normal test loads
+	  from parser argv; and add focused regression coverage for every audited
+	  path above.
+	* docs: align license metadata with the GPLv3-only source grant; correct the
+	  generated manual's action, world-path, and merge wording; document every
+	  verification tier; and keep generated roff warning-clean under mandoc.
 
 0.7.5 "Same Difference" (20260609)
 
