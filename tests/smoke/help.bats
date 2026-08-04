@@ -37,3 +37,16 @@ setup() {
 	# regresses silently to empty.
 	assert_output --partial 'depends'
 }
+
+@test "smoke: action-mode help does not add 80-column overflows" {
+	run env COLUMNS=80 "$DEP_BIN" --colour=no --help
+	assert_success
+	local line
+	local -a overlong=()
+	for line in "${lines[@]}"; do
+		(( ${#line} > 80 )) && overlong+=("$line")
+	done
+	# --full-atoms is the single pre-existing long-only indentation overflow.
+	[[ ${#overlong[@]} -eq 1 ]]
+	[[ "${overlong[0]}" == *--full-atoms* ]]
+}

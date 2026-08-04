@@ -62,9 +62,9 @@ Options: (--option=[yes,no] unless otherwise indicated)      (default)
   \(+-q, --unique-depends Show dependencies that only PACKAGE requires (no)
   \(+-D[num], --depth[=num] Depth to follow dependency trees  (unlimited)
   \(+-n, --uninstalled Include uninstalled packages in searches      (no)
-  \(+-a, --ask       For mutating actions: prompt before applying changes (no)
-  \(+-p, --pretend   For mutating actions: preview without applying changes (no)
-      --force        For mutating actions: apply changes without prompting (no)
+  \(+-a, --ask       Prompt before applying changes                  (no)
+  \(+-p, --pretend   Preview changes without applying them           (no)
+      --force        Apply changes without prompting                 (no)
 .fi
 .SH OPTIONS
 .TP
@@ -189,13 +189,13 @@ Depth to follow dependency trees (default: unlimited)
 Include uninstalled packages in searches (default: no)
 .TP
 \fB\(+-a\fR, \fB--ask\fR
-For mutating actions: prompt before applying changes (default: no)
+Prompt before applying changes (default: no)
 .TP
 \fB\(+-p\fR, \fB--pretend\fR
-For mutating actions: preview without applying changes (default: no)
+Preview changes without applying them (default: no)
 .TP
 \fB--force\fR
-For mutating actions: apply changes without prompting (default: no)
+Apply changes without prompting (default: no)
 .PP
 A package is unneeded if there is no installed package that depends on it. As
 a special case, the running kernel's sources are needed.
