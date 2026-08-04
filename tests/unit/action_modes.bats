@@ -25,3 +25,27 @@ load 'test_helper'
 	assert_equal "$do_arg_action" usage
 	assert_equal "$arg_error" '--pretend, --ask, and --force are mutually exclusive'
 }
+
+stub_action_dispatch() {
+	resolve_eroot_paths() { :; }
+	load_portage_config() { :; }
+	set_xterm_title() { :; }
+	redundant() { printf '%s\n' cat/redundant-1.0; }
+	emerge() { printf '%s\n' "$*"; }
+}
+
+@test "-Pp parses and dispatches purge through pretend emerge" {
+	load_dep_with_args -Pp
+	stub_action_dispatch
+	run main
+	assert_success
+	assert_output '-vC --pretend cat/redundant-1.0'
+}
+
+@test "-dp parses and dispatches depclean through pretend emerge" {
+	load_dep_with_args -dp
+	stub_action_dispatch
+	run main
+	assert_success
+	assert_output '-vC --pretend cat/redundant-1.0'
+}

@@ -253,7 +253,7 @@ language `dep` understands.
 
 ## Testing
 
-The test matrix has four complementary gates: 330 isolated Bats unit tests,
+The test matrix has four complementary gates: 332 isolated Bats unit tests,
 11 property-invariant tests for configuration transforms, 47 smoke tests
 against a real Portage tree, and `make check-oracle`, which compares at least
 100 installed plus 100 visible CPVs against Python Portage. The older
