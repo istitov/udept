@@ -1312,15 +1312,8 @@ function repo_for_cpv() {
 function atom_use_satisfies() {
 	local candidate=$1 spec=$2 parent=$3 candidate_use parent_use iuse tok
 	local flag default candidate_on parent_on require_on conditional invert
+	local candidate_loaded='' parent_loaded=''
 	[[ "$spec" ]] || return 0
-	if [[ -d "$VARDB_DIR/$candidate" ]]; then
-		candidate_use=$(extract_var_from_vardb USE "$candidate")
-		iuse=$(extract_var_from_vardb IUSE "$candidate" | strip_iuse_prefixes)
-	else
-		candidate_use=$(dbuse "$candidate")
-		iuse=$(extract_var IUSE "$candidate" 2>/dev/null | strip_iuse_prefixes)
-	fi
-	parent_use=${parent:+$(dbuse "$parent")}
 	while IFS= read -r tok; do
 		[[ "$tok" ]] || continue
 		conditional='' invert='' require_on=''
@@ -1339,12 +1332,11 @@ function atom_use_satisfies() {
 			-*) require_on=no; flag=${tok#-};;
 			*) require_on=yes; flag=$tok;;
 		esac
-		if has "$flag" $iuse; then
-			has "$flag" $candidate_use && candidate_on=yes || candidate_on=no
-		else
-			case "$default" in on) candidate_on=yes;; off) candidate_on=no;; *) return 1;; esac
-		fi
 		if [[ "$conditional" ]]; then
+			if [[ -z "$parent_loaded" ]]; then
+				parent_use=${parent:+$(dbuse "$parent")}
+				parent_loaded=yes
+			fi
 			has "$flag" $parent_use && parent_on=yes || parent_on=no
 			if [[ "$conditional" == '?' ]]; then
 				if [[ "$invert" ]]; then
@@ -1358,6 +1350,21 @@ function atom_use_satisfies() {
 				require_on=$parent_on
 				[[ "$invert" ]] && { [[ "$require_on" == yes ]] && require_on=no || require_on=yes; }
 			fi
+		fi
+		if [[ -z "$candidate_loaded" ]]; then
+			if [[ -d "$VARDB_DIR/$candidate" ]]; then
+				candidate_use=$(extract_var_from_vardb USE "$candidate")
+				iuse=$(extract_var_from_vardb IUSE "$candidate" | strip_iuse_prefixes)
+			else
+				candidate_use=$(dbuse "$candidate")
+				iuse=$(extract_var IUSE "$candidate" 2>/dev/null | strip_iuse_prefixes)
+			fi
+			candidate_loaded=yes
+		fi
+		if has "$flag" $iuse; then
+			has "$flag" $candidate_use && candidate_on=yes || candidate_on=no
+		else
+			case "$default" in on) candidate_on=yes;; off) candidate_on=no;; *) return 1;; esac
 		fi
 		[[ "$candidate_on" == "$require_on" ]] || return 1
 	done < <(tr ',' '\n' <<<"$spec")

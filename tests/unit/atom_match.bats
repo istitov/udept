@@ -88,6 +88,20 @@ setup() {
 	assert_failure
 }
 
+@test "inactive USE conditionals do not load candidate metadata" {
+	local queried="$BATS_TEST_TMPDIR/candidate-queried"
+	VARDB_DIR="$BATS_TEST_TMPDIR/empty-vardb"
+	mkdir -p "$VARDB_DIR"
+	dbuse() {
+		[[ $1 == cat/parent-1 ]] || printf queried >"$queried"
+	}
+	extract_var() { printf queried >"$queried"; return 1; }
+
+	run atom_use_satisfies cat/candidate-1 'feature?' cat/parent-1
+	assert_success
+	assert [ ! -e "$queried" ]
+}
+
 @test "multilib conditional USE group remains matchable" {
 	local abi_flags='abi_mips_n32 abi_mips_n64 abi_mips_o32 abi_s390_32 abi_s390_64 abi_x86_32 abi_x86_64 abi_x86_x32'
 	printf '%s\n' "$abi_flags" >"$VARDB_DIR/cat/pkg-2.0/IUSE"
