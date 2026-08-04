@@ -35,6 +35,23 @@ setup() {
 	assert_equal "$VARDB_DIR" "/var/db/pkg"
 }
 
+@test "standalone EPREFIX obtains its matching EROOT from portageq" {
+	local called="$BATS_TEST_TMPDIR/called"
+	portageq() {
+		printf '%s\n' "$*" >"$called"
+		printf "EROOT='%s'\n" "$BATS_TEST_TMPDIR/prefix-root/"
+	}
+	EROOT=''
+	EPREFIX='/prefix'
+	PORTAGE_CONFIGROOT=''
+	resolve_eroot_paths
+	assert_equal "$(<"$called")" 'envvar -v EROOT'
+	assert_equal "$EROOT" "$BATS_TEST_TMPDIR/prefix-root"
+	assert_equal "$EPREFIX" '/prefix'
+	assert_equal "$VARDB_DIR" "$BATS_TEST_TMPDIR/prefix-root/var/db/pkg"
+	assert_equal "$ETC_PORTAGE_DIR" '/prefix/etc/portage'
+}
+
 @test "relative roots are rejected" {
 	local variable
 	for variable in EROOT EPREFIX PORTAGE_CONFIGROOT; do

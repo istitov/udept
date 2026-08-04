@@ -79,10 +79,14 @@ function resolve_eroot_paths() {
 	# round-trip per invocation. The directory check is cheap.
 	local explicit_roots="${EROOT:+yes}${EPREFIX:+yes}${PORTAGE_CONFIGROOT:+yes}"
 	[[ -z "$explicit_roots" \
-		&& -z "${PORTAGE_CONFIGROOT:-}" \
 		&& -d /var/db/pkg && ! "${PORTAGE_OVERRIDE_EPREFIX:-}" ]] && return
 	if [[ -z "$explicit_roots" ]] && command -v portageq >/dev/null 2>&1; then
 		eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
+	elif [[ -z "$EROOT" && "$EPREFIX" ]] \
+		&& command -v portageq >/dev/null 2>&1; then
+		# An explicit Prefix identifies the configuration layout but not the
+		# target root. Preserve it while asking Portage for the matching EROOT.
+		eval "$(portageq envvar -v EROOT 2>/dev/null)"
 	fi
 	case "${EROOT:-/}" in /*) ;; *)
 		format_error <<<"dep: EROOT must be absolute: $EROOT" >&2; return 1;;
