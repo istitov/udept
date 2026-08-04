@@ -614,11 +614,23 @@ else
 fi
 
 # HTML is implemented as an outer encoder process around an otherwise normal
-# coloured invocation.  Start it before the help/version short-circuit so
-# those paths receive the same escaping as full Portage-backed commands.
-if [[ "$0" == */dep && "$opt_arg_colour" == "html" \
-	&& -z "${UDEPT_HTML_RENDERING:-}" ]]; then
-	UDEPT_HTML_RENDERING=1 "$0" "$@" 2>&1 | html_render_stream
+# coloured invocation. Replace the parsed --colour=html token only before a
+# possible `--`, then re-exec with ANSI colour enabled. This avoids an
+# environment recursion marker that callers could inherit or spoof to bypass
+# the encoder, while preserving literal arguments after `--`.
+if [[ "$0" == */dep && "$opt_arg_colour" == "html" ]]; then
+	_html_args=(); _html_options=yes
+	for _html_arg in "$@"; do
+		if [[ "$_html_options" && "$_html_arg" == -- ]]; then
+			_html_options=
+		elif [[ "$_html_options" && "$_html_arg" == --colour=html ]]; then
+			_html_arg=--colour=yes
+		fi
+		_html_args+=("$_html_arg")
+	done
+	# This marker controls title emission only; unlike the old recursion
+	# marker it cannot suppress or bypass the outer encoder.
+	UDEPT_HTML_TITLES=1 "$0" "${_html_args[@]}" 2>&1 | html_render_stream
 	exit "${PIPESTATUS[0]}"
 fi
 
@@ -795,7 +807,7 @@ function rpad() {
 
 # set_xterm_title: emit OSC title sequence on stderr to update xterm/screen titlebar (or html titlebar div).
 function set_xterm_title() {
-	if [[ "$opt_arg_colour" == "html" ]]; then
+	if [[ "$opt_arg_colour" == "html" || "${UDEPT_HTML_TITLES:-}" == 1 ]]; then
 		printf '\033]2;%s\007' "$*" >&2
 	else
 		[[ "$TERM" = @(@(x|E|a|k)term|rxvt|gnome|screen)* ]] \
@@ -4368,7 +4380,7 @@ function install_new_file() {
 			root="${PORTAGE_CONFIGROOT}${EPREFIX}"
 			[[ "$root" ]] || root=/;;
 		"$PORTAGE_LIB_DIR"|"$PORTAGE_LIB_DIR"/*) root=${EROOT:-/};;
-		*) root=${UDEPT_WRITE_ROOT:-${target%/*}};;
+		*) root=${target%/*};;
 	esac
 	[[ "$root" ]] || root=.
 	resolved=$(_resolve_install_target "$target" "$root") || return 1

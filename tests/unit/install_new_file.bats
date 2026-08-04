@@ -132,7 +132,8 @@ setup() {
 	printf 'OLD\n' >"$BATS_TEST_TMPDIR/root/real-world"
 	ln -s real-world "$BATS_TEST_TMPDIR/root/world"
 	printf 'NEW\n' >"$BATS_TEST_TMPDIR/new"
-	UDEPT_WRITE_ROOT="$BATS_TEST_TMPDIR/root"
+	EROOT="$BATS_TEST_TMPDIR/root"
+	PORTAGE_LIB_DIR="$EROOT"
 
 	run install_new_file "$BATS_TEST_TMPDIR/new" "$BATS_TEST_TMPDIR/root/world"
 	assert_success
@@ -160,7 +161,8 @@ setup() {
 	ln -s missing "$BATS_TEST_TMPDIR/root/dangling"
 	ln -s "$BATS_TEST_TMPDIR/outside" "$BATS_TEST_TMPDIR/root/outside-link"
 	printf 'OLD\n' >"$BATS_TEST_TMPDIR/outside"
-	UDEPT_WRITE_ROOT="$BATS_TEST_TMPDIR/root"
+	EROOT="$BATS_TEST_TMPDIR/root"
+	PORTAGE_LIB_DIR="$EROOT"
 
 	run install_new_file "$BATS_TEST_TMPDIR/new" "$BATS_TEST_TMPDIR/root/dangling"
 	assert_failure
