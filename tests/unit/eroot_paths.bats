@@ -36,10 +36,15 @@ setup() {
 }
 
 @test "relative roots are rejected" {
-	EROOT='relative/root'
-	EPREFIX=''
-	PORTAGE_CONFIGROOT=''
-	run resolve_eroot_paths
-	assert_failure
-	assert_output --partial 'EROOT must be absolute'
+	local variable
+	for variable in EROOT EPREFIX PORTAGE_CONFIGROOT; do
+		EROOT=''
+		EPREFIX=''
+		PORTAGE_CONFIGROOT=''
+		printf -v "$variable" '%s' 'relative/root'
+		run resolve_eroot_paths
+		assert_failure
+		assert_output --partial '!!!'
+		assert_output --partial "$variable must be absolute"
+	done
 }

@@ -84,9 +84,15 @@ function resolve_eroot_paths() {
 	if [[ -z "$explicit_roots" ]] && command -v portageq >/dev/null 2>&1; then
 		eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
 	fi
-	case "${EROOT:-/}" in /*) ;; *) printf 'dep: EROOT must be absolute: %s\n' "$EROOT" >&2; return 1;; esac
-	case "${EPREFIX:-/}" in /*) ;; *) printf 'dep: EPREFIX must be absolute: %s\n' "$EPREFIX" >&2; return 1;; esac
-	case "${PORTAGE_CONFIGROOT:-/}" in /*) ;; *) printf 'dep: PORTAGE_CONFIGROOT must be absolute: %s\n' "$PORTAGE_CONFIGROOT" >&2; return 1;; esac
+	case "${EROOT:-/}" in /*) ;; *)
+		format_error <<<"dep: EROOT must be absolute: $EROOT" >&2; return 1;;
+	esac
+	case "${EPREFIX:-/}" in /*) ;; *)
+		format_error <<<"dep: EPREFIX must be absolute: $EPREFIX" >&2; return 1;;
+	esac
+	case "${PORTAGE_CONFIGROOT:-/}" in /*) ;; *)
+		format_error <<<"dep: PORTAGE_CONFIGROOT must be absolute: $PORTAGE_CONFIGROOT" >&2; return 1;;
+	esac
 	EPREFIX="${EPREFIX:-}"; EPREFIX="${EPREFIX%/}"
 	EROOT="${EROOT:-/}";   EROOT="${EROOT%/}"
 	PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT:-}"; PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT%/}"
@@ -5024,7 +5030,7 @@ function overlay_clean() {
 function main() {
 	# All real actions need the install-prefix paths, even owners (which
 	# otherwise skips load_portage_config to save the heavier setup).
-	resolve_eroot_paths
+	resolve_eroot_paths || exit 2
 	if [[ "$load_config" ]]; then
 		set_xterm_title "Loading Portage configuration..."
 		load_portage_config

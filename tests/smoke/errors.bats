@@ -10,6 +10,7 @@
 # nothing, which is less interesting as a regression check.
 
 load test_helper
+bats_require_minimum_version 1.5.0
 
 setup() {
 	require_dep_built
@@ -23,4 +24,13 @@ setup() {
 	# OR escalates to a non-zero exit will surface here.
 	assert_success
 	assert_output --partial 'No matches for'
+}
+
+@test "smoke: relative EROOT fails before action dispatch" {
+	require_target OWNED_FILE
+	run --separate-stderr env EROOT=relative/root \
+		"$DEP_BIN" --colour=no -F "$OWNED_FILE"
+	[ "$status" -eq 2 ]
+	[[ -z "$output" ]]
+	[[ "$stderr" == *'EROOT must be absolute'* ]]
 }
