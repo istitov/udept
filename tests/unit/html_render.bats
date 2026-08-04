@@ -27,3 +27,17 @@ EOF
 	assert_success
 	assert_output '<div class="titlebar">title &lt;b&gt;&amp; bad</div>after'
 }
+
+@test "html renderer strips carriage returns with other controls" {
+	run html_render_stream <<<$'left\rright'
+	assert_success
+	assert_output 'leftright'
+}
+
+@test "plain HTML escaper cannot translate terminal controls" {
+	local input=$'\e]2;<b>&"\047\a'
+	run html_escape_text "$input"
+	assert_success
+	assert_output ']2;&lt;b&gt;&amp;&quot;&#39;'
+	refute_output --partial '<div'
+}

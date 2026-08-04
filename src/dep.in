@@ -133,7 +133,7 @@ function html_render_stream() {
 		gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;", s)
 		gsub(/>/, "\\&gt;", s); gsub(/"/, "\\&quot;", s)
 		gsub(/\047/, "\\&#39;", s)
-		gsub(/[\001-\010\013\014\016-\037\177]/, "", s)
+		gsub(/[\001-\010\013-\037\177]/, "", s)
 		return s
 	}
 	function close_span() { if (active) { printf "</span>"; active = 0 } }
@@ -175,7 +175,13 @@ function html_render_stream() {
 }
 
 function html_escape_text() {
-	printf '%s' "$*" | html_render_stream
+	local text=$*
+	text=${text//&/&amp;}
+	text=${text//</&lt;}
+	text=${text//>/&gt;}
+	text=${text//\"/&quot;}
+	text=${text//\'/&#39;}
+	printf '%s' "$text" | LC_ALL=C tr -d '\001-\010\013-\037\177'
 }
 
 # ============================================================================
@@ -629,13 +635,12 @@ esac
 
 # html_wrap: wrap a 'dep ...' run as a styled <pre>; re-execs dep with --colour=html and the original argv.
 function html_wrap() {
-	local escaped_title escaped_command
-	escaped_title=$(html_escape_text "$PROG $*")
+	local escaped_command
 	escaped_command=$(html_escape_text "$PROG $*")
 	cat <<END
 <html>
 <head>
-	<title>${escaped_title}</title>
+	<title>${escaped_command}</title>
 	<style>
 		pre.terminal { background-color: white; border: solid thin; 
 			padding-left: 2px; padding-right: 2px; 
