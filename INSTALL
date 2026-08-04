@@ -23,10 +23,25 @@ Standard autoconf options (--prefix, --bindir, etc.) apply unchanged.
 
 Tests:
 
-  make check       runs the bats unit-test suite.
-                   requires dev-util/bats, dev-util/bats-support,
-                   dev-util/bats-assert (the latter two live in the
-                   ::guru and ::stuff overlays today, not ::gentoo).
+  make check                 286 isolated Bats unit tests
+  make check-properties      11 configuration-transform invariants
+  make check-smoke           43 read-only tests against a real Portage tree
+  make check-oracle          Bash atom matcher vs Python Portage
+  make check-dist-inventory  source/archive test-inventory equality
+  make distcheck             isolated archive build/install/uninstall check
+
+The three Bats tiers require dev-util/bats, dev-util/bats-support, and
+dev-util/bats-assert (the latter two are available from overlays such as
+::guru and ::stuff). The smoke and metadata-backed property cases require
+a populated Portage tree; unavailable per-test targets are skipped. The
+oracle additionally requires Python 3 with the Portage module. Build the
+program with `make` before running the smoke tier.
+
+For the same static checks used by CI, also run:
+
+    shellcheck --severity=warning src/dep
+    bash -n completion/dep
+    zsh -n completion/_dep
 
 For detailed usage and architecture, see README.md and the man page
 (`man dep` once installed). For per-release change history, see

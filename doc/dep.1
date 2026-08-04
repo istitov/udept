@@ -1,14 +1,14 @@
-.TH DEP 1 "2026-08-03" "udept 0.8.0" "Portage utilities"
+.TH DEP 1 "2026-08-04" "udept 0.8.0" "Portage utilities"
 .SH NAME
 dep \- an inappropriate Portage engine
 .SH SYNOPSIS
 .B dep
-[\fIOPTION\fR]... [\fIACTION\fR | \fIINFO\fR-\fITYPE\fR [\fIPACKAGE\fR | \fIVIRTUAL\fR | \fIFILE\fR | \fIUSE\fR | \fICATEGORY\fR | \fIPATTERN\fR]...]
+[\fIOPTION\fR]... [\fIACTION\fR | \fIINFO\fR-\fITYPE\fR [\fIPACKAGE\fR |
+\fIVIRTUAL\fR | \fIFILE\fR | \fIUSE\fR | \fICATEGORY\fR | \fIPATTERN\fR]...]
 .SH DESCRIPTION
-.PP
-List dependencies and reverse dependencies of packages, and clean the world file and the set of installed packages.
+List dependencies and reverse dependencies of packages, and clean the world
+file and the set of installed packages.
 .SH "OPTIONS SUMMARY"
-.PP 
 Here is a short summary of the options available in dep\&. Please refer
 to the detailed description below for a complete description\&.
 .PP
@@ -63,7 +63,7 @@ Options: (--option=[yes,no] unless otherwise indicated)      (default)
   \(+-D[num], --depth[=num] Depth to follow dependency trees  (unlimited)
   \(+-n, --uninstalled Include uninstalled packages in searches      (no)
   \(+-a, --ask       For mutating actions: prompt before applying changes (no)
-  \(+-p, --pretend   For -[Pdw]: just show what would be done        (no)
+  \(+-p, --pretend   For mutating actions: preview without applying changes (no)
       --force        For mutating actions: apply changes without prompting (no)
 .fi
 .SH OPTIONS
@@ -192,18 +192,23 @@ Include uninstalled packages in searches (default: no)
 For mutating actions: prompt before applying changes (default: no)
 .TP
 \fB\(+-p\fR, \fB--pretend\fR
-For -[Pdw]: just show what would be done (default: no)
+For mutating actions: preview without applying changes (default: no)
 .TP
 \fB--force\fR
 For mutating actions: apply changes without prompting (default: no)
 .PP
-A package is unneeded if there is no installed package that depends on it. As a special case, the running kernel's sources are needed.
-
-A world file entry is redundant if there is another installed package that depends on it. When merging the new world file, the merging program used is sdiff(1). Your world file is located at /var/lib/portage/world.
-
-Spring-clean will help find large sets of unneeded packages and orphaned circular dependency loops.
-
-Env vars - USE, ACCEPT_KEYWORDS, etc., can be used to override /etc/portage/make.conf.
+A package is unneeded if there is no installed package that depends on it. As
+a special case, the running kernel's sources are needed.
+.PP
+A world file entry is redundant if another installed package depends on it.
+The world-file path follows the resolved Portage root (EROOT). In --ask mode,
+selecting Merge invokes sdiff(1); direct replacement does not.
+.PP
+Spring-clean will help find large sets of unneeded packages and orphaned
+circular dependency loops.
+.PP
+Environment variables such as USE and ACCEPT_KEYWORDS override values
+resolved from the active Portage configuration.
 .SH EXAMPLES
 .TP
 dep \-e portage
@@ -225,14 +230,16 @@ dep -1 --full-atoms -l sys-apps/portage
 Emit dependencies of portage as fully-qualified emerge atoms
 (=cat/pkg-version:slot::repo) suitable for piping into emerge.
 .SH FILES
-.PP
+These are the default locations. EROOT relocates the state paths;
+PORTAGE_CONFIGROOT and EPREFIX relocate the configuration paths.
+.nf
 /var/db/pkg
 <repo>/metadata/md5-cache
 /etc/portage/repos.conf
 /etc/portage/make.conf
 /etc/portage/make.profile
+.fi
 .SH "SEE ALSO"
-.PP
 portage(5), equery(1)
 .SH AUTHOR
 Originally written by Ed Catmur (2004\(en2006). Modernization

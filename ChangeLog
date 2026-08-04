@@ -1,4 +1,4 @@
-0.8.0 "Trust, but Verify" (20260803)
+0.8.0 "Trust, but Verify" (20260804)
 
 	Feature-preserving hardening release. HTML output now has one safe
 	escaping boundary; mutating actions default to dry-run and use atomic,
@@ -9,6 +9,10 @@
 	A test-only Python Portage oracle gates hundreds of installed/visible
 	atom decisions, and release archives must carry the exact source test
 	inventory. No command or feature was removed.
+
+	* docs: correct the generated manual's stale `--pretend`, world-path,
+	  and merge wording; document every verification tier in INSTALL; and
+	  make the generated roff warning-clean under `mandoc -T lint`.
 
 0.7.5 "Same Difference" (20260609)
 

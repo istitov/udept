@@ -6,6 +6,24 @@
 #
 
 source "$1" --exec :
+
+# Keep generated roff readable and mandoc-lint clean. In filled mode these
+# newlines remain word separators, so wrapping does not change rendering.
+wrap_roff() {
+	fold -s -w 78 | sed 's/[[:blank:]]*$//'
+}
+
+# INSTRUCTIONS contains one paragraph per line.
+emit_instructions() {
+	local line first=yes
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		[[ -n "$line" ]] || continue
+		[[ "$first" == yes ]] || echo .PP
+		printf '%s\n' "$line" | wrap_roff
+		first=no
+	done <<<"$INSTRUCTIONS"
+}
+
 cat <<END
 .TH DEP 1 "$(date +%F)" "udept $VERSION" "Portage utilities"
 .SH NAME
@@ -13,13 +31,15 @@ $PROG \- $SYNOPSIS
 .SH SYNOPSIS
 .B $PROG
 END
-echo "${USELINE}" | sed 's/\<[[:upper:]]\+\>/\\fI&\\fR/g'
+printf '%s\n' "$USELINE" \
+	| sed 's/\<[[:upper:]]\+\>/\\fI&\\fR/g' \
+	| wrap_roff
 cat <<END
 .SH DESCRIPTION
-.PP
-${DESCRIPTION}
+END
+printf '%s\n' "$DESCRIPTION" | wrap_roff
+cat <<END
 .SH "OPTIONS SUMMARY"
-.PP 
 Here is a short summary of the options available in dep\&. Please refer
 to the detailed description below for a complete description\&.
 .PP
@@ -65,12 +85,9 @@ END
 		[[ "${shopt_idefault[$i]}" ]] \
 			&& echo " (default: ${shopt_idefault[$i]})" || echo
 	done
+echo .PP
+emit_instructions
 cat <<END
-.PP
-${INSTRUCTIONS//
-/
-
-}
 .SH EXAMPLES
 .TP
 dep \-e portage
@@ -92,14 +109,16 @@ dep -1 --full-atoms -l sys-apps/portage
 Emit dependencies of portage as fully-qualified emerge atoms
 (=cat/pkg-version:slot::repo) suitable for piping into emerge.
 .SH FILES
-.PP
+These are the default locations. EROOT relocates the state paths;
+PORTAGE_CONFIGROOT and EPREFIX relocate the configuration paths.
+.nf
 /var/db/pkg
 <repo>/metadata/md5-cache
 /etc/portage/repos.conf
 /etc/portage/make.conf
 /etc/portage/make.profile
+.fi
 .SH "SEE ALSO"
-.PP
 portage(5), equery(1)
 .SH AUTHOR
 Originally written by Ed Catmur (2004\\(en2006). Modernization
