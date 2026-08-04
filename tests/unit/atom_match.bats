@@ -106,8 +106,42 @@ setup() {
 	resdepend() { printf '%s\n' 'cat/pkg[foo(-)?] '; }
 	virtuals_from() { :; }
 	world_sets_expand() { :; }
+	installed_mlsrs() { :; }
 	is_running_kernel() { return 1; }
 
 	run _smartdep cat/pkg-2.0
 	assert_output 'cat/parent-1 cat/pkg[foo(-)?]'
+}
+
+setup_smartdep_repo_case() {
+	WORLD_FILE="$BATS_TEST_TMPDIR/world"
+	: >"$WORLD_FILE"
+	allprofilepackages=
+	provided_mlsrs() { printf '2.0\n'; }
+	avail_versions() { printf '2.0\n'; }
+	potential_revdepends() { printf 'cat/parent-1\n'; }
+	virtuals_from() { :; }
+	world_sets_expand() { :; }
+	is_running_kernel() { return 1; }
+}
+
+@test "_smartdep accepts a repository suffix without a slot" {
+	setup_smartdep_repo_case
+	resdepend() { printf '%s\n' 'cat/pkg::testrepo '; }
+	run _smartdep cat/pkg-2.0
+	assert_output 'cat/parent-1 cat/pkg::testrepo'
+}
+
+@test "_smartdep rejects a malformed triple-colon suffix" {
+	setup_smartdep_repo_case
+	resdepend() { printf '%s\n' 'cat/pkg:::testrepo '; }
+	run _smartdep cat/pkg-2.0
+	assert_output ''
+}
+
+@test "_smartdep_nopv rejects a malformed triple-colon suffix" {
+	setup_smartdep_repo_case
+	resdepend() { printf '%s\n' 'cat/pkg:::testrepo '; }
+	run _smartdep_nopv cat/pkg
+	assert_output ''
 }

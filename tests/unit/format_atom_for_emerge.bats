@@ -120,3 +120,11 @@ fake_install() {
 	result="$(format_atom_for_emerge 'cat/pkg-1.0')"
 	assert_equal "$result" '=cat/pkg-1.0'
 }
+
+@test "format_atom_for_emerge: full atoms delegate repository lookup" {
+	slot_for() { printf '%s\n' 0; }
+	repo_for_cpv() { printf '%s\n' delegated; }
+	opt_arg_full_atoms=1
+	result="$(format_atom_for_emerge 'cat/pkg-1.0')"
+	assert_equal "$result" '=cat/pkg-1.0:0::delegated'
+}

@@ -903,18 +903,8 @@ function format_atom_for_emerge() {
 		local slot
 		slot="$(slot_for "$cpv" 2>/dev/null)"
 		[[ "$slot" ]] && atom="${atom}:${slot%/*}"
-		local repo=""
-		if [[ -f "${VARDB_DIR}/$cpv/repository" ]]; then
-			repo="$(<"${VARDB_DIR}/$cpv/repository")"
-		else
-			local tree r
-			tree="$(best_tree "$cpv" 2>/dev/null)"
-			if [[ "$tree" ]]; then
-				for r in "${!repo_loc[@]}"; do
-					[[ "${repo_loc[$r]%/}" == "${tree%/}" ]] && { repo="$r"; break; }
-				done
-			fi
-		fi
+		local repo
+		repo=$(repo_for_cpv "$cpv" 2>/dev/null)
 		[[ "$repo" ]] && atom="${atom}::${repo}"
 	fi
 	echo "$atom"
@@ -2761,7 +2751,7 @@ function _smartdep() {
 	# raw_depends now preserves these in the token stream; the regex used
 	# to require a literal space immediately after the atom which would
 	# silently miss every slot-bearing depatom.
-	local atom_suffix='\(:[^][[:space:]]*\)\?\(::[[:alnum:]_.+-]*\)\?\(\[[^]]*\]\)\?'
+	local atom_suffix='\(:[[:alnum:]_.+*/=-]\+\)\?\(::[[:alnum:]_.+-]\+\)\?\(\[[^]]*\]\)\?'
 	potential_revdepends $needle \
 	| while read deppkg; do
 		has $deppkg $exclude && continue
@@ -2822,7 +2812,7 @@ function _smartdep_nopv () {
 	# Slot-agnostic: target is a cp with no version, so we can't pin a
 	# specific SLOT for filtering. The regex still has to *tolerate*
 	# slots in the token stream now that raw_depends preserves them.
-	local atom_suffix='\(:[^][[:space:]]*\)\?\(::[[:alnum:]_.+-]*\)\?\(\[[^]]*\]\)\?'
+	local atom_suffix='\(:[[:alnum:]_.+*/=-]\+\)\?\(::[[:alnum:]_.+-]\+\)\?\(\[[^]]*\]\)\?'
 	potential_revdepends ${needle} "$exclude" \
 	| while read deppkg; do
 		resdepend "${deppkg}" "${ordeps}" | grep '^\('"${needle}"'\|''\([<>]=\?\|[=~]\)'"${needle}-$VER_REGEXP"'\*\?''\)'"${atom_suffix}"' ' \
