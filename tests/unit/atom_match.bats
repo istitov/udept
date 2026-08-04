@@ -35,6 +35,13 @@ setup() {
 	assert_failure
 }
 
+@test "shared matcher metadata lookup is nounset-safe" {
+	set -u
+	run dep_satisfies_atom cat/pkg-2.0 '=cat/pkg-2.0:0/2::testrepo'
+	set +u
+	assert_success
+}
+
 @test "USE dependency defaults handle flags absent from IUSE" {
 	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[missing(+)]'
 	assert_success

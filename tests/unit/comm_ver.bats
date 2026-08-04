@@ -298,3 +298,10 @@ setup() {
 	run comm_ver "1.0_pre" "1.0_pre1"
 	[ "$status" -ge 128 ]
 }
+
+@test "comm_ver: unequal suffix-list lengths are nounset-safe" {
+	set -u
+	run comm_ver 0-r2 0_p999999
+	set +u
+	[ "$status" -eq 253 ]
+}

@@ -1276,7 +1276,7 @@ function repo_name_for_tree() {
 }
 
 function repo_for_cpv() {
-	local cpv=$1 tree=$2
+	local cpv=$1 tree=${2-}
 	if [[ -r "$VARDB_DIR/$cpv/repository" ]]; then
 		cat "$VARDB_DIR/$cpv/repository"
 	else
@@ -1458,6 +1458,7 @@ function accept_for() {
 	accept_ks=("${ACCEPT_KEYWORDS[@]}")
 	extra_ks=()
 	while read -a atom_keywords; do
+		(( ${#atom_keywords[@]} )) || continue
 		if dep_satisfies ${cp}-${mlsr} "${atom_keywords[0]}"; then
 			[[ -z "${atom_keywords[*]:1}" ]] \
 				&& extra_ks=("${extra_ks[@]}" "~${ARCH}") \
@@ -1580,7 +1581,7 @@ function extract_var_from_edb() {
 # depcache under $EDB_DIR/dep (for overlays that ship no in-tree cache), with a
 # vardb fallback when neither cache has the cpv.
 function extract_var() {
-	local name="$1" cpv="$2" tree="$3"
+	local name="$1" cpv="$2" tree=${3-}
 	if [[ "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
 		extract_var_from_vardb "$name" "$cpv"
 		return
@@ -1610,12 +1611,12 @@ function extract_var() {
 
 # keywords_for: store KEYWORDS array for cpv $1 (in tree $2) into nameref-named var $3 (default RESULT).
 function keywords_for() {
-	read -a "${3:-RESULT}" <<<"$(extract_var KEYWORDS $1 $2)"
+	read -a "${3:-RESULT}" <<<"$(extract_var KEYWORDS "$1" "${2-}")"
 }
 
 # slot_for: echo SLOT for cpv $1 (in optional tree $2) via extract_var.
 function slot_for() {
-	extract_var SLOT $1 $2
+	extract_var SLOT "$1" "${2-}"
 }
 
 # pkginternal_use_for: echo per-line IUSE defaults for cpv $1: '+flag' -> flag, '-flag' -> -flag; strip plain entries.
@@ -2053,7 +2054,7 @@ function comm_ver() {
 	[[ "$s1_l" > "$s2_l" ]] && return 4
 	s1_ss=( ${s1_ss//_/ } ); s2_ss=( ${s2_ss//_/ } )
 	for ((i=0; i<${#s1_ss[@]} || i<${#s2_ss[@]}; ++i)); do
-		s1si="${s1_ss[$i]}"; s2si="${s2_ss[$i]}"
+		s1si="${s1_ss[$i]-}"; s2si="${s2_ss[$i]-}"
 		s1sci="${s1si/%*([[:digit:]])}"; s2sci="${s2si/%*([[:digit:]])}"
 		# Status-class ordering per the function header and Portage
 		# spec: alpha < beta < pre < rc < release < p.  Earlier
