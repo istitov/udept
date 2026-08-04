@@ -25,8 +25,9 @@ load "$(_udept_find_bats_helper bats-support)"
 load "$(_udept_find_bats_helper bats-assert)"
 
 # Source src/dep.in safely.
-#   - 'set --' clears positional args so the script's top-level option
-#     parser doesn't choke on the bats runner's argv.
+#   - load_dep always clears positional args so the script's top-level option
+#     parser cannot consume arguments from the bats runner or its caller.
+#   - load_dep_with_args is the explicit parser-test entry point.
 #   - $0 is the bats test runner here (something like '.../bats-exec-test'),
 #     not '*/dep', so the two `[[ "$0" == */dep ]]` guards in the script
 #     don't fire — main() is not called and load_portage_config / portageq
@@ -40,7 +41,7 @@ load "$(_udept_find_bats_helper bats-assert)"
 # memoised. If bats ever shares a process across tests, that isolation
 # breaks and tests using fixtures will need to clear $temp_dir/<fn>/
 # explicitly in setup().
-load_dep() {
+_load_dep() {
 	# Save bats's traps before sourcing — dep.in installs its own
 	# EXIT/TERM traps for tempdir cleanup (line ~558) which would
 	# replace bats's EXIT trap (`bats_exit_trap`) used for result
@@ -57,9 +58,8 @@ load_dep() {
 	_bats_exit_trap=$(trap -p EXIT)
 	_bats_term_trap=$(trap -p TERM)
 	_bats_err_trap=$(trap -p ERR)
-	# Optional arguments let parser-focused tests source dep.in with a
-	# deliberate argv; ordinary callers pass none and retain the historical
-	# empty argument list.
+	# _load_dep receives deliberate parser argv only through
+	# load_dep_with_args; the ordinary wrapper invokes it with none.
 	set -- "$@"
 	# bats runs with set -e; dep.in uses '((counter++))' patterns that
 	# return non-zero when the pre-increment value is 0, which would
@@ -79,4 +79,12 @@ load_dep() {
 	eval "$_bats_term_trap"
 	eval "$_bats_err_trap"
 	return 0
+}
+
+load_dep() {
+	_load_dep
+}
+
+load_dep_with_args() {
+	_load_dep "$@"
 }

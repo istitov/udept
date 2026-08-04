@@ -9,19 +9,19 @@ load 'test_helper'
 }
 
 @test "--ask selects interactive mode" {
-	load_dep --ask --exec true
+	load_dep_with_args --ask --exec true
 	assert_equal "$do_action" ask
 	assert_equal "$portage_action_arg" --ask
 }
 
 @test "--force selects execution mode" {
-	load_dep --force --exec true
+	load_dep_with_args --force --exec true
 	assert_equal "$do_action" force
 	assert_equal "$portage_action_arg" ''
 }
 
 @test "action modes are mutually exclusive" {
-	load_dep --pretend --force --exec true
+	load_dep_with_args --pretend --force --exec true
 	assert_equal "$do_arg_action" usage
 	assert_equal "$arg_error" '--pretend, --ask, and --force are mutually exclusive'
 }
