@@ -815,11 +815,11 @@ function log_message() {
 
 # memoise: wrap function $1: cache stdout per-arglist in $temp_dir/$1, on hit cat the file; replaces $1 in place.
 function memoise() {
-	mkdir $temp_dir/$1
+	mkdir "$temp_dir/$1"
 	eval "__memoised__$1() { $(typeset -f $1 | sed '1,2d;$d'); }
 	$1() {
 		[[ -d $temp_dir ]] || return 1
-		mkdir -p \"$temp_dir/$1\" || return 1
+		[[ -d \"$temp_dir/$1\" ]] || return 1
 		local x=\"$temp_dir/$1/_\${*//\//:}\"
 		(( \${#x} > 255 )) && x=\"$temp_dir/$1/\$(sha1sum <<<\"\$*\")\"
 		RETVAL=0
@@ -848,11 +848,11 @@ function memoise_predicate() {
 	eval "__memoised_predicate__$1() { $(typeset -f "$1" | sed '1,2d;$d'); }
 	$1() {
 		[[ -d \"\$temp_dir\" ]] || return 1
-		mkdir -p \"\$temp_dir/$1\" || return 1
+		[[ -d \"\$temp_dir/$1\" ]] || return 1
 		local x=\"\$temp_dir/$1/_\${*//\//:}\" rc
-		if [[ -r \"\$x\" ]]; then
-			read -r rc <\"\$x\"
-		else
+		(( \${#x} > 255 )) && x=\"\$temp_dir/$1/\$(sha1sum <<<\"\$*\")\"
+		if [[ ! -r \"\$x\" ]] || ! read -r rc <\"\$x\" \\
+			|| [[ ! \$rc =~ ^[0-9]+\$ ]] || (( rc > 255 )); then
 			__memoised_predicate__$1 \"\$@\"; rc=\$?
 			printf '%s\\n' \"\$rc\" >\"\$x\"
 		fi
