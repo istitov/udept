@@ -15,6 +15,7 @@
 # function rather than exiting.
 
 load 'test_helper'
+bats_require_minimum_version 1.5.0
 
 setup() {
 	load_dep
@@ -44,6 +45,23 @@ setup() {
 		printf 'returned; target-exists=%s' "$([[ -e $temp_dir/target ]] && echo yes || echo no)"
 	)
 	assert_equal "$out" "returned; target-exists=no"
+}
+
+@test "ask_install_new_file --force: failed write is diagnosed and returned" {
+	printf 'OLD\n' >"$temp_dir/old"
+	printf 'NEW\n' >"$temp_dir/new"
+	printf 'OLD\n' >"$temp_dir/target"
+	do_action=force
+	mktemp() {
+		[[ "$*" == *'.target.udept.'* ]] && return 23
+		command mktemp "$@"
+	}
+
+	run --separate-stderr ask_install_new_file \
+		"$temp_dir/old" "$temp_dir/new" "$temp_dir/target" "test file"
+	[ "$status" -eq 23 ]
+	[[ "$stderr" == *"failed to install '$temp_dir/target'"* ]]
+	assert_equal "$(cat "$temp_dir/target")" OLD
 }
 
 # Workflow-level regression: drive the real filter_etc_portage ->

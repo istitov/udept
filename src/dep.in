@@ -4306,7 +4306,10 @@ function _path_is_within() {
 # referent; dangling/cyclic or out-of-root links are rejected.
 function _resolve_install_target() {
 	local target=$1 root=$2 resolved canonical_root
-	canonical_root=$(realpath -m -- "$root") || return 1
+	canonical_root=$(realpath -m -- "$root") || {
+		format_error <<<"cannot resolve write root '$root'" >&2
+		return 1
+	}
 	if [[ -L "$target" ]]; then
 		resolved=$(readlink -f -- "$target") || {
 			format_error <<<"refusing dangling or cyclic symlink '$target'" >&2
@@ -4317,7 +4320,10 @@ function _resolve_install_target() {
 			return 1
 		}
 	else
-		resolved=$(realpath -m -- "$target") || return 1
+		resolved=$(realpath -m -- "$target") || {
+			format_error <<<"cannot resolve write target '$target'" >&2
+			return 1
+		}
 	fi
 	_path_is_within "$resolved" "$canonical_root" || {
 		format_error <<<"refusing write through '$target' outside '$canonical_root'" >&2
@@ -4334,30 +4340,32 @@ function _resolve_install_target() {
 # temporary, retain the target's metadata, validate and flush it, then rename.
 # The old file remains intact on every failure before mv(1).
 function _install_new_file_atomic() {
-	local new=$1 target=$2 dir base tmp rc
+	local new=$1 target=$2 dir base tmp rc preserve
 	[[ -f "$new" && -r "$new" ]] || return 1
 	dir=${target%/*}; [[ "$dir" == "$target" ]] && dir=.
 	base=${target##*/}
-	tmp=$(mktemp -- "$dir/.${base}.udept.XXXXXX") || return 1
-	if [[ -e "$target" ]]; then
-		cp --preserve=all -- "$target" "$tmp" || {
-			rc=$?; command rm -f -- "$tmp"; return "$rc"
-		}
-	fi
+	tmp=$(mktemp -- "$dir/.${base}.udept.XXXXXX") || {
+		rc=$?; return "$rc"
+	}
 	cat -- "$new" >"$tmp" || {
 		rc=$?; command rm -f -- "$tmp"; return "$rc"
 	}
-	# Rewriting content updates mtime; udept historically retained target
-	# metadata, so restore timestamps after the content copy as well.
+	# Copy metadata only after staging the new content. Copying the old data is
+	# wasted I/O, and --preserve=all asks non-root users to retain ownership
+	# they cannot set even when the directory is otherwise writable.
 	if [[ -e "$target" ]]; then
-		touch -r "$target" -- "$tmp" || {
+		preserve=mode,timestamps
+		(( EUID == 0 )) && preserve=all
+		cp --attributes-only --preserve="$preserve" -- "$target" "$tmp" || {
 			rc=$?; command rm -f -- "$tmp"; return "$rc"
 		}
 	fi
 	cmp -s -- "$new" "$tmp" || {
-		command rm -f -- "$tmp"; return 1
+		rc=$?; command rm -f -- "$tmp"; return "$rc"
 	}
-	sync -f -- "$tmp" 2>/dev/null || sync
+	sync -f -- "$tmp" 2>/dev/null || sync || {
+		rc=$?; command rm -f -- "$tmp"; return "$rc"
+	}
 	mv -f -- "$tmp" "$target" || {
 		rc=$?; command rm -f -- "$tmp"; return "$rc"
 	}
@@ -4368,7 +4376,7 @@ function _install_new_file_atomic() {
 # writes use the same atomic helper; elevation is attempted once, so a denied
 # authentication cannot create an unbounded prompt loop.
 function install_new_file() {
-	local new=$1 target=$2 root resolved helper quoted
+	local new=$1 target=$2 root resolved helper quoted rc
 	case "$target" in
 		"$ETC_PORTAGE_DIR"|"$ETC_PORTAGE_DIR"/*)
 			root="${PORTAGE_CONFIGROOT}${EPREFIX}"
@@ -4378,25 +4386,28 @@ function install_new_file() {
 	esac
 	[[ "$root" ]] || root=.
 	resolved=$(_resolve_install_target "$target" "$root") || return 1
-	if (( EUID == 0 )) || [[ -w "$resolved" ]] \
-		|| { [[ ! -e "$resolved" ]] && [[ -w "${resolved%/*}" ]]; }; then
+	if (( EUID == 0 )) || [[ -w "${resolved%/*}" ]]; then
 		_install_new_file_atomic "$new" "$resolved"
-		return $?
-	fi
-
-	helper="$(declare -f _install_new_file_atomic); _install_new_file_atomic \"\$1\" \"\$2\""
-	if command -v doas >/dev/null 2>&1; then
-		doas bash -c "$helper" _ "$new" "$resolved"
-	elif command -v sudo >/dev/null 2>&1; then
-		sudo bash -c "$helper" _ "$new" "$resolved"
-	elif command -v su >/dev/null 2>&1; then
-		echo "Please enter your root password or Ctrl+C, Enter to cancel."
-		printf -v quoted 'bash -c %q _ %q %q' "$helper" "$new" "$resolved"
-		su -c "$quoted"
+		rc=$?
 	else
-		format_error >&2 <<<"no doas/sudo/su found; cannot install '$target' as root"
-		return 1
+		helper="$(declare -f _install_new_file_atomic); _install_new_file_atomic \"\$1\" \"\$2\""
+		if command -v doas >/dev/null 2>&1; then
+			doas bash -c "$helper" _ "$new" "$resolved"; rc=$?
+		elif command -v sudo >/dev/null 2>&1; then
+			sudo bash -c "$helper" _ "$new" "$resolved"; rc=$?
+		elif command -v su >/dev/null 2>&1; then
+			echo "Please enter your root password or Ctrl+C, Enter to cancel."
+			printf -v quoted 'bash -c %q _ %q %q' "$helper" "$new" "$resolved"
+			su -c "$quoted"; rc=$?
+		else
+			format_error >&2 <<<"no doas/sudo/su found; cannot install '$target' as root"
+			return 1
+		fi
 	fi
+	if (( rc != 0 )); then
+		format_error <<<"failed to install '$target' from '$new' (status $rc)" >&2
+	fi
+	return "$rc"
 }
 
 # filter_world: pruneworld: drop entries from $WORLD_FILE whose reverse-tree is empty, then ask_install_new_file the rewrite.
@@ -4783,7 +4794,7 @@ function ask_install_new_file() {
 				[[ $? -eq 2 ]] || cat "$merged" >"$new";;
 			esac
 		done;;
-		force )	install_new_file "$new" "$target";;
+		force )	install_new_file "$new" "$target"; return $?;;
 	esac
 }
 

@@ -9,6 +9,7 @@
 # and escalates only when it genuinely isn't.
 
 load 'test_helper'
+bats_require_minimum_version 1.5.0
 
 setup() {
 	load_dep
@@ -71,6 +72,61 @@ setup() {
 	assert [ -z "$(find "$BATS_TEST_TMPDIR" -name '.world.udept.*' -print -quit)" ]
 }
 
+@test "install_new_file: stages metadata without copying old content" {
+	local target="$BATS_TEST_TMPDIR/world" new="$BATS_TEST_TMPDIR/new"
+	local cp_args="$BATS_TEST_TMPDIR/cp-args"
+	printf 'OLD\n' >"$target"
+	printf 'NEW\n' >"$new"
+	cp() { printf '%s\n' "$*" >"$cp_args"; command cp "$@"; }
+
+	run install_new_file "$new" "$target"
+	assert_success
+	assert_equal "$(cat "$target")" NEW
+	grep -q -- '--attributes-only' "$cp_args"
+}
+
+@test "install_new_file: mktemp failure is diagnosed and preserves target" {
+	local target="$BATS_TEST_TMPDIR/world" new="$BATS_TEST_TMPDIR/new"
+	printf 'OLD\n' >"$target"
+	printf 'NEW\n' >"$new"
+	mktemp() {
+		[[ "$*" == *'.world.udept.'* ]] && return 23
+		command mktemp "$@"
+	}
+
+	run --separate-stderr install_new_file "$new" "$target"
+	[ "$status" -eq 23 ]
+	[[ "$stderr" == *"failed to install '$target'"* ]]
+	assert_equal "$(cat "$target")" OLD
+	assert [ -z "$(find "$BATS_TEST_TMPDIR" -name '.world.udept.*' -print -quit)" ]
+}
+
+@test "install_new_file: metadata-copy failure is diagnosed and preserves target" {
+	local target="$BATS_TEST_TMPDIR/world" new="$BATS_TEST_TMPDIR/new"
+	printf 'OLD\n' >"$target"
+	printf 'NEW\n' >"$new"
+	cp() { return 24; }
+
+	run --separate-stderr install_new_file "$new" "$target"
+	[ "$status" -eq 24 ]
+	[[ "$stderr" == *"failed to install '$target'"* ]]
+	assert_equal "$(cat "$target")" OLD
+	assert [ -z "$(find "$BATS_TEST_TMPDIR" -name '.world.udept.*' -print -quit)" ]
+}
+
+@test "install_new_file: validation mismatch is diagnosed and preserves target" {
+	local target="$BATS_TEST_TMPDIR/world" new="$BATS_TEST_TMPDIR/new"
+	printf 'OLD\n' >"$target"
+	printf 'NEW\n' >"$new"
+	cmp() { return 25; }
+
+	run --separate-stderr install_new_file "$new" "$target"
+	[ "$status" -eq 25 ]
+	[[ "$stderr" == *"failed to install '$target'"* ]]
+	assert_equal "$(cat "$target")" OLD
+	assert [ -z "$(find "$BATS_TEST_TMPDIR" -name '.world.udept.*' -print -quit)" ]
+}
+
 @test "install_new_file: preserves an in-root symlink" {
 	mkdir "$BATS_TEST_TMPDIR/root"
 	printf 'OLD\n' >"$BATS_TEST_TMPDIR/root/real-world"
@@ -116,7 +172,8 @@ setup() {
 @test "install_new_file: validation failure leaves original intact" {
 	local target="$BATS_TEST_TMPDIR/world"
 	printf 'OLD\n' >"$target"
-	run install_new_file "$BATS_TEST_TMPDIR/missing" "$target"
+	run --separate-stderr install_new_file "$BATS_TEST_TMPDIR/missing" "$target"
 	assert_failure
+	[[ "$stderr" == *"failed to install '$target'"* ]]
 	assert_equal "$(cat "$target")" OLD
 }
