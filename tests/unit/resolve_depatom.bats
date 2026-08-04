@@ -2,8 +2,7 @@
 # Unit tests for resolve_depatom — answers 'is this depatom satisfied by
 # anything?' and returns the resolved cpv. The function:
 #
-#   - strips :slot suffixes at entry (defensive, for raw_depends-preserved
-#     slots that flow through to slot-agnostic callers)
+#   - parses :slot suffixes at entry and enforces them in the shared matcher
 #   - splits the version operator (=, >=, <=, ~, <, >) out via 'vs'
 #   - routes 'cat/pkg' / 'cat/pkg-version' direct to _resolve_depatom_inner
 #   - routes bare 'pkg' through pv_to_cpv to recover the category
@@ -84,38 +83,35 @@ do_resolve() {
 	assert_output 'cat/pkg-1.0'
 }
 
-@test "resolve_depatom: ':slot' suffix stripped before resolution" {
-	# The defensive strip at entry — added in commit 4e5a5fc when raw_depends
-	# stopped pre-stripping slots. Without this, _resolve_depatom_inner would
-	# try to look up 'cat/pkg:0-...' as a cp and fail.
+@test "resolve_depatom: ':slot' suffix is parsed and enforced" {
 	provided_and_avail() { echo "1.0"; }
 	run do_resolve "cat/pkg:0"
 	assert_success
 	assert_output 'cat/pkg-1.0'
 }
 
-@test "resolve_depatom: ':slot=' (binding op) stripped" {
+@test "resolve_depatom: ':slot=' binding is accepted for the matching slot" {
 	provided_and_avail() { echo "1.0"; }
 	run do_resolve "cat/pkg:0="
 	assert_success
 	assert_output 'cat/pkg-1.0'
 }
 
-@test "resolve_depatom: ':slot/sub' stripped" {
+@test "resolve_depatom: ':slot/sub' is parsed and enforced" {
 	provided_and_avail() { echo "1.0"; }
 	run do_resolve "cat/pkg:0/2"
 	assert_success
 	assert_output 'cat/pkg-1.0'
 }
 
-@test "resolve_depatom: ':*' any-slot operator stripped" {
+@test "resolve_depatom: ':*' accepts any slot" {
 	provided_and_avail() { echo "1.0"; }
 	run do_resolve "cat/pkg:*"
 	assert_success
 	assert_output 'cat/pkg-1.0'
 }
 
-@test "resolve_depatom: '=' + ':slot' both stripped together" {
+@test "resolve_depatom: exact version and slot constraints compose" {
 	provided_and_avail() { echo "1.0"; }
 	run do_resolve "=cat/pkg-1.0:0"
 	assert_success

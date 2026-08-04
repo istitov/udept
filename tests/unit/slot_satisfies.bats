@@ -1,8 +1,6 @@
 #!/usr/bin/env bats
-# Unit tests for slot_satisfies and dep_satisfies_slot — the slot-aware
-# matchers introduced as Phase 1 of the slot-aware revdep work. No live
-# callers yet; these helpers will be wired into _smartdep / _smartdep_nopv
-# in Phase 2.
+# Unit tests for the shared matcher's slot primitive and the retained
+# dep_satisfies_slot compatibility/test seam.
 
 load 'test_helper'
 
@@ -125,10 +123,10 @@ fake_install_with_slot() {
 }
 
 # ------------------------------------------------------------------
-# dep_satisfies_slot — wraps dep_satisfies + slot_satisfies
+# dep_satisfies_slot — compatibility name for dep_satisfies_atom
 # ------------------------------------------------------------------
 
-@test "dep_satisfies_slot: depatom without slot delegates to dep_satisfies" {
+@test "dep_satisfies_slot: depatom without slot delegates to the shared matcher" {
 	run dep_satisfies_slot 'cat/pkg-1.0' 'cat/pkg' ''
 	assert_success
 	run dep_satisfies_slot 'cat/pkg-1.0' '=cat/pkg-1.0' ''

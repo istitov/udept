@@ -1,14 +1,22 @@
 #!/usr/bin/env bats
-# Unit tests for dep_satisfies — answers 'does CPV satisfy DEPATOM?'
+# Compatibility-name coverage for the shared EAPI 8 atom matcher.
 # Returns 0 on match, 2 if the cp differs (early-out), non-zero on
-# version mismatch. USE-dep brackets and slot suffixes are stripped
-# from the depatom before comparison; we don't filter on either,
-# since the bare cat/pkg-version still names the right target.
+# any version, slot, repository, or USE mismatch.
 
 load 'test_helper'
 
 setup() {
 	load_dep
+	VARDB_DIR="$BATS_TEST_TMPDIR/vardb"
+	for cpv in cat/pkg-1.0 cat/pkg-1.5; do
+		mkdir -p "$VARDB_DIR/$cpv"
+		printf '%s\n' '0/2' >"$VARDB_DIR/$cpv/SLOT"
+		printf '%s\n' 'foo bar baz' >"$VARDB_DIR/$cpv/IUSE"
+		printf '%s\n' 'foo' >"$VARDB_DIR/$cpv/USE"
+	done
+	# Consumed dynamically by atom_use_satisfies from the sourced script.
+	# shellcheck disable=SC2034
+	opt_arg_original_depends=yes
 }
 
 @test "dep_satisfies: bare cp matches any version" {
@@ -76,28 +84,28 @@ setup() {
 	assert_equal "$status" 2
 }
 
-@test "dep_satisfies: slot suffix ':0' stripped before compare" {
-	run dep_satisfies 'cat/pkg-1.0' '=cat/pkg-1.0:0'
+@test "dep_satisfies: slot suffix ':0' is enforced" {
+	run dep_satisfies 'cat/pkg-1.0' '=cat/pkg-1.0:0' '0/2'
 	assert_success
 }
 
-@test "dep_satisfies: slot/sub-slot ':0/2' stripped before compare" {
-	run dep_satisfies 'cat/pkg-1.0' '=cat/pkg-1.0:0/2'
+@test "dep_satisfies: slot/sub-slot ':0/2' is enforced" {
+	run dep_satisfies 'cat/pkg-1.0' '=cat/pkg-1.0:0/2' '0/2'
 	assert_success
 }
 
-@test "dep_satisfies: slot operator ':=' stripped before compare" {
+@test "dep_satisfies: bind-only ':=' accepts any slot" {
 	run dep_satisfies 'cat/pkg-1.0' '=cat/pkg-1.0:='
 	assert_success
 }
 
-@test "dep_satisfies: USE-deps '[foo]' stripped before compare" {
+@test "dep_satisfies: USE-deps '[foo]' are enforced" {
 	run dep_satisfies 'cat/pkg-1.0' 'cat/pkg[foo]'
 	assert_success
 }
 
-@test "dep_satisfies: complex USE-deps + slot + version-op stripped" {
-	run dep_satisfies 'cat/pkg-1.5' '>=cat/pkg-1.0:0/2[foo,-bar,baz?]'
+@test "dep_satisfies: complex USE-deps slot and version constraints compose" {
+	run dep_satisfies 'cat/pkg-1.5' '>=cat/pkg-1.0:0/2[foo,-bar,baz?]' '0/2'
 	assert_success
 }
 

@@ -1341,31 +1341,18 @@ function atom_use_satisfies() {
 	done < <(tr ',' '\n' <<<"$spec")
 }
 
-# dep_satisfies: test whether cpv $1 satisfies depatom $2 (cat/pn match + version); returns 2 on different cp.
+# dep_satisfies: compatibility name for the shared atom matcher.
+#
+# Older out-of-tree callers may still source dep and invoke this name.  Keep
+# the interface, but do not retain a second, lenient interpretation of atoms.
 function dep_satisfies() {
-	local testpkg="$1" depatom="$2"
-	# Drop USE-dep brackets ([foo,-bar,baz?]) and slot suffixes (:0, :=, :*) —
-	# we don't filter on them so the bare cat/pkg-version still names the right
-	# target. depatom is local so we don't disturb the caller's view.
-	while [[ "$depatom" == *\[*\]* ]]; do
-		depatom="${depatom%%\[*}${depatom#*\]}"
-	done
-	depatom="${depatom%%:*}"
-	local t_cp="${testpkg/%-$VER_SHPAT}"
-	local t_mlsr="${testpkg#${t_cp}-}"
-	local d_cpv="${depatom/#@(<|<=|=|~|>=|>)}"
-	local vs="${depatom%${d_cpv}}"
-	local d_cp="${d_cpv/%-$VER_SHPAT?(\*)}"
-	local d_mlsr="${d_cpv#${d_cp}-}"
-	# doesn't dereference virtuals
-	[[ "$t_cp" != "$d_cp" ]] && return 2
-	dep_satisfies_mlsr "$t_mlsr" "$vs" "$d_mlsr"
+	dep_satisfies_atom "$@"
 }
 
-# dep_satisfies_atom: the shared command-path EAPI 8 matcher. Optional
-# arguments supply candidate SLOT, repository, tree, and parent CPV.
+# dep_satisfies_atom: the shared EAPI 8 matcher. Optional arguments supply
+# candidate SLOT, repository, parent CPV, and the candidate repository tree.
 function dep_satisfies_atom() {
-	local testpkg=$1 depatom=$2 pkg_slot=${3-} pkg_repo=${4-} parent=${5-}
+	local testpkg=$1 depatom=$2 pkg_slot=${3-} pkg_repo=${4-} parent=${5-} tree=${6-}
 	atom_parse "$depatom" || return 2
 	local cp=$ATOM_CP version=$ATOM_VERSION op=$ATOM_OP slot=$ATOM_SLOT
 	local repo=$ATOM_REPO use=$ATOM_USE
@@ -1373,11 +1360,11 @@ function dep_satisfies_atom() {
 	[[ "$test_cp" == "$cp" ]] || return 2
 	[[ -z "$version" ]] || dep_satisfies_mlsr "$test_version" "$op" "$version" || return 1
 	if [[ "$slot" ]]; then
-		[[ "$pkg_slot" ]] || pkg_slot=$(slot_for "$testpkg" 2>/dev/null)
+		[[ "$pkg_slot" ]] || pkg_slot=$(slot_for "$testpkg" "$tree" 2>/dev/null)
 		slot_satisfies "$pkg_slot" "$slot" || return 1
 	fi
 	if [[ "$repo" ]]; then
-		[[ "$pkg_repo" ]] || pkg_repo=$(repo_for_cpv "$testpkg" 2>/dev/null)
+		[[ "$pkg_repo" ]] || pkg_repo=$(repo_for_cpv "$testpkg" "$tree" 2>/dev/null)
 		[[ "$pkg_repo" == "$repo" ]] || return 1
 	fi
 	atom_use_satisfies "$testpkg" "$use" "$parent" || return 1
@@ -1422,27 +1409,15 @@ function slot_satisfies() {
 
 # dep_satisfies_slot testpkg depatom [pkg_slot]
 #
-# Like dep_satisfies, but additionally honors any :slot[/sub-slot] in
-# depatom when pkg_slot is known. Returns:
-#   0 — match (cp, version, AND slot)
-#   1 — version or slot mismatch
-#   2 — different cp (early-out, same as dep_satisfies)
-#
-# If pkg_slot is omitted and testpkg names an installed cpv, the slot is
-# looked up via slot_for. If neither caller-supplied nor lookup yields a
-# slot, dep_satisfies_slot falls back to slot_satisfies's conservative
-# behavior — no slot info = mismatch when the depatom carries a
-# constraint.
-#
-# If depatom has no slot constraint, behaves identically to dep_satisfies
-# (the slot lookup is skipped entirely — this is the hot path).
+# Compatibility/test seam retained for callers of the former slot-only
+# matcher.  All semantics now come from dep_satisfies_atom.
 function dep_satisfies_slot() {
 	dep_satisfies_atom "$1" "$2" "${3-}"
 }
 
 # accept_for: compute effective ACCEPT_KEYWORDS for cp/mlsr from package.{accept_keywords,keywords}; result in nameref $3.
 function accept_for() {
-	local cp="$1" mlsr="$2" return="${3:-RESULT}"
+	local cp="$1" mlsr="$2" return="${3:-RESULT}" tree=${4-}
 	# package.accept_keywords is the modern canonical name; package.keywords
 	# is the legacy alias and may or may not exist. Either or both can be a
 	# file or a directory of files.
@@ -1459,7 +1434,7 @@ function accept_for() {
 	extra_ks=()
 	while read -a atom_keywords; do
 		(( ${#atom_keywords[@]} )) || continue
-		if dep_satisfies ${cp}-${mlsr} "${atom_keywords[0]}"; then
+		if dep_satisfies_atom "${cp}-${mlsr}" "${atom_keywords[0]}" '' '' '' "$tree"; then
 			[[ -z "${atom_keywords[*]:1}" ]] \
 				&& extra_ks=("${extra_ks[@]}" "~${ARCH}") \
 				|| extra_ks=("${extra_ks[@]}" "${atom_keywords[@]:1}")
@@ -1756,14 +1731,15 @@ function use_tokens_at() {
 
 # package_use_rules_at: emit matching package.* USE flags rooted at $1.
 function package_use_rules_at() {
-	local path=$1 name=$2 cpv=$3 package flags file
+	local path=$1 name=$2 cpv=$3 tree=${4-} package flags file
 	local rule_files=()
 	while IFS= read -r file; do
 		[[ "$file" ]] && rule_files+=("$file")
 	done < <(config_path_files "$path" "$name")
 	(( ${#rule_files[@]} )) || return 0
 	while read -r package flags; do
-		dep_satisfies "$cpv" "$package" && printf '%s\n' "$flags"
+		dep_satisfies_atom "$cpv" "$package" '' '' '' "$tree" \
+			&& printf '%s\n' "$flags"
 	done < <(kill_comments_and_blanks "${rule_files[@]}") \
 		| split_use_tokens | tac
 }
@@ -1776,7 +1752,7 @@ function package_use_rules() {
 		[[ "$path" ]] && package_use_rules_at "$path" "$name" "$cpv"
 	done <<<"$profile_stack"
 	tree=$(best_tree "$cpv" 2>/dev/null)
-	[[ "$tree" ]] && package_use_rules_at "$tree/profiles" "$name" "$cpv"
+	[[ "$tree" ]] && package_use_rules_at "$tree/profiles" "$name" "$cpv" "$tree"
 }
 
 function package_use_force() {
@@ -1864,16 +1840,16 @@ function repo_usecomponent() {
 			[[ "$path" ]] || continue
 			path=$path/profiles
 			if package_is_stable "$cpv"; then
-				package_use_rules_at "$path" package.use.stable "$cpv"
+				package_use_rules_at "$path" package.use.stable "$cpv" "$tree"
 			fi
-			package_use_rules_at "$path" package.use "$cpv"
+			package_use_rules_at "$path" package.use "$cpv" "$tree"
 			package_is_stable "$cpv" && use_tokens_at "$path" use.stable
 			make_defaults_use "$path/make.defaults"
 		done < <(repository_chain "$repo")
 	else
 		path=$tree/profiles
-		package_is_stable "$cpv" && package_use_rules_at "$path" package.use.stable "$cpv"
-		package_use_rules_at "$path" package.use "$cpv"
+		package_is_stable "$cpv" && package_use_rules_at "$path" package.use.stable "$cpv" "$tree"
+		package_use_rules_at "$path" package.use "$cpv" "$tree"
 		package_is_stable "$cpv" && use_tokens_at "$path" use.stable
 		make_defaults_use "$path/make.defaults"
 	fi
@@ -1889,15 +1865,17 @@ memoise repo_usecomponent
 
 # user_package_usecomponent: emit matching /etc/portage/package.use changes.
 function user_package_usecomponent() {
-	local cpv=$1 package flags file
+	local cpv=$1 package flags file tree
 	local rule_files=()
 	[[ "$cpv" ]] || return 0
 	while IFS= read -r file; do
 		[[ "$file" ]] && rule_files+=("$file")
 	done < <(etc_portage_files package.use)
 	(( ${#rule_files[@]} )) || return 0
+	tree=$(best_tree "$cpv" 2>/dev/null)
 	while read -r package flags; do
-		dep_satisfies "$cpv" "$package" && printf '%s\n' "$flags"
+		dep_satisfies_atom "$cpv" "$package" '' '' '' "$tree" \
+			&& printf '%s\n' "$flags"
 	done < <(kill_comments_and_blanks "${rule_files[@]}") \
 		| split_use_tokens | tac
 }
@@ -2394,9 +2372,8 @@ function raw_depends() {
 		s/(+)/__UDEPT_USE_DEFAULT_ON__/g
 		s/(-)/__UDEPT_USE_DEFAULT_OFF__/g
 		# Slot/sub-slot/operator suffixes (:0, :*, :=, :0/2, :0=) are
-		# preserved in the token stream so slot-aware revdep filtering
-		# (dep_satisfies_slot) can read them. Slot-agnostic consumers
-		# (dep_satisfies, dep_to_cps, resolve_depatom) strip locally.
+		# preserved in the token stream so the shared atom matcher can enforce
+		# them. Structural consumers (dep_to_cps) strip them locally.
 		# Tokenise: parens become standalone tokens, whitespace -> newlines
 		s/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g
 		s/__UDEPT_USE_DEFAULT_ON__/(+)/g
@@ -2918,7 +2895,8 @@ function _resolve_depatom_inner() {
 	return 1
 }
 
-# resolve_depatom: echo first cpv satisfying depatom $1 (installed-only when $2); slot-agnostic, memoised.
+# resolve_depatom: echo first cpv satisfying depatom $1 (installed-only when
+# $2), enforcing every constraint through the shared matcher; memoised.
 function resolve_depatom() {
 	depatom="$1"; installed_only="$2"; resolve_parent="$3"; resolve_atom="$1"
 	set_xterm_title "Resolving dependency: $depatom"
@@ -2945,54 +2923,55 @@ memoise resolve_depatom
 # === is_package_unmasked, get_mask_comment, keyword_sym, is_keyword_masked.
 # ============================================================================
 
-# is_in_maskfile: true if cp/mlsr ($1/$2) is masked by any line in mask files $3+ (after stacking_sort, !-inverts).
+# is_in_maskfile: true if cp/mlsr ($1/$2), from optional tree $3, is
+# masked by any line in mask files $4+ (after stacking_sort, !-inverts).
 function is_in_maskfile() {
-	local cp="$1"; local mlsr="$2"; shift 2
-	kill_comments_and_blanks "$@" 2>/dev/null | grep "$cp" | stacking_sort yes \
+	local cp=$1 mlsr=$2 tree=$3; shift 3
+	kill_comments_and_blanks "$@" 2>/dev/null | grep -F "$cp" | stacking_sort yes \
 	| while read depatom; do
-		[[ "${depatom%\*}" == ?(<|<=|=|~|>=|>)${cp}?(-$VER_SHPAT?(\*)) ]] \
-			|| continue
-		! dep_satisfies ${cp}-${mlsr} "${depatom}" || return 1
+		atom_parse "$depatom" || continue
+		[[ "$ATOM_CP" == "$cp" ]] || continue
+		! dep_satisfies_atom "${cp}-${mlsr}" "$depatom" '' '' '' "$tree" || return 1
 	done || return 0; return 1
 }
 
 # is_inclusion_masked: true if cp has an include-atom in profile 'packages' but no include-atom matches this specific mlsr (i.e. mlsr is excluded from the inclusion set).
 function is_inclusion_masked() {
-	local cp="$1" mlsr="$2"
-	grep "$cp" <<<"${allprofilepackages}" \
+	local cp=$1 mlsr=$2 tree=${3-}
+	grep -F "$cp" <<<"${allprofilepackages}" \
 	| while read depatom; do
 		depatom="${depatom#\*}"
-		[[ "${depatom%\*}" == ?(<|<=|=|~|>=|>)${cp}?(-$VER_SHPAT?(\*)) ]] \
-			|| continue
-		dep_satisfies ${cp}-${mlsr} "$depatom" || return 1
+		atom_parse "$depatom" || continue
+		[[ "$ATOM_CP" == "$cp" ]] || continue
+		dep_satisfies_atom "${cp}-${mlsr}" "$depatom" '' '' '' "$tree" || return 1
 	done || return 0; return 1
 }
 
 # is_package_masked: true if cp/mlsr is masked by profile inclusion or package.mask (unless covered by package.unmask, ret 2).
 function is_package_masked() {
-	local cp="$1" mlsr="$2"
-	is_inclusion_masked "$cp" "$mlsr" && return 0
-	is_in_maskfile "$cp" "$mlsr" $(etc_portage_files package.unmask) && return 2
-	is_in_maskfile "$cp" "$mlsr" $(profile_files_extra package.mask)
+	local cp=$1 mlsr=$2 tree=${3-}
+	is_inclusion_masked "$cp" "$mlsr" "$tree" && return 0
+	is_in_maskfile "$cp" "$mlsr" "$tree" $(etc_portage_files package.unmask) && return 2
+	is_in_maskfile "$cp" "$mlsr" "$tree" $(profile_files_extra package.mask)
 }
 
 # is_package_unmasked: true if cp/mlsr is in profile package.mask AND in /etc/portage/package.unmask.
 function is_package_unmasked() {
-	local cp="$1"; local mlsr="$2"
-	is_in_maskfile $cp $mlsr $(profile_files_extra package.mask) \
-	&& is_in_maskfile $cp $mlsr $(etc_portage_files package.unmask)
+	local cp=$1 mlsr=$2 tree=${3-}
+	is_in_maskfile "$cp" "$mlsr" "$tree" $(profile_files_extra package.mask) \
+		&& is_in_maskfile "$cp" "$mlsr" "$tree" $(etc_portage_files package.unmask)
 }
 
 # get_mask_comment: echo coloured mask provenance for cp/mlsr: SYSTEM PROFILE or atom+commentary from each profile package.mask.
 function get_mask_comment() {
-	local cp="$1"; local mlsr="$2"
+	local cp=$1 mlsr=$2 tree=${3-} depatom
 
-	grep "$cp" <<<"${allprofilepackages}" \
+	grep -F "$cp" <<<"${allprofilepackages}" \
 	| while read depatom; do
 		depatom="${depatom#\*}"
-		[[ "${depatom%\*}" == ?(<|<=|=|~|>=|>)${cp}?(-$VER_SHPAT?(\*)) ]] \
-			|| continue
-		if ! dep_satisfies ${cp}-${mlsr} "$depatom"; then
+		atom_parse "$depatom" || continue
+		[[ "$ATOM_CP" == "$cp" ]] || continue
+		if ! dep_satisfies_atom "${cp}-${mlsr}" "$depatom" '' '' '' "$tree"; then
 			echo "${RD}SYSTEM PROFILE${NO}"
 			return 1
 		fi
@@ -3002,14 +2981,18 @@ function get_mask_comment() {
 		local state=""
 		while read line; do
 			case "$state" in
-			"") 
-				[[ "$line" == -?(<|<=|=|~|>=|>)${cp}?(-$VER_SHPAT?(\*)) ]] \
-					&& dep_satisfies ${cp}-${mlsr} "${line#-}" \
-					&& exclude[${#exclude[@]}]="${line#-}"
-				[[ "$line" == ?(<|<=|=|~|>=|>)${cp}?(-$VER_SHPAT?(\*)) ]] \
-					&& dep_satisfies ${cp}-${mlsr} "${line}" \
-					&& ! has "$line" "${exclude[@]}" \
-					&& { state="found"; format_depatom "${line}"; };;
+			"")
+				if [[ "$line" == -* ]]; then
+					depatom=${line#-}
+					atom_parse "$depatom" && [[ "$ATOM_CP" == "$cp" ]] \
+						&& dep_satisfies_atom "${cp}-${mlsr}" "$depatom" '' '' '' "$tree" \
+						&& exclude[${#exclude[@]}]="$depatom"
+				else
+					atom_parse "$line" && [[ "$ATOM_CP" == "$cp" ]] \
+						&& dep_satisfies_atom "${cp}-${mlsr}" "$line" '' '' '' "$tree" \
+						&& ! has "$line" "${exclude[@]}" \
+						&& { state="found"; format_depatom "$line"; }
+				fi;;
 			"found") 
 				[[ "$line" == *([[:space:]]) ]] && break
 				[[ "$line" == "#"* ]] && { state="comment"; echo "${RD}$line${NO}"; };;
@@ -3031,7 +3014,7 @@ function keyword_sym() {
 	local my_keywords my_accept k_unstable="" k_masked=""
 	keywords_for $cp-$mlsr "$tree" my_keywords
 	has '*' "${my_keywords[@]}" && { echo " "; return 1; }
-	accept_for $cp $mlsr my_accept
+	accept_for "$cp" "$mlsr" my_accept "$tree"
 	has '*' "${my_accept[@]}" && for keyword in "${my_keywords[@]}"; do
 		[[ "$keyword" != [~-]* ]] && { echo " "; return 3; }
 	done
@@ -3063,7 +3046,7 @@ function is_keyword_masked() {
 	local my_keywords my_accept
 	keywords_for $cp-$mlsr "$tree" my_keywords
 	has '*' "${my_keywords[@]}" && return 1 
-	accept_for $cp $mlsr my_accept
+	accept_for "$cp" "$mlsr" my_accept "$tree"
 	has '*' "${my_accept[@]}" && for keyword in "${my_keywords[@]}"; do
 		[[ "$keyword" != [~-]* ]] && return 3
 	done
@@ -3093,7 +3076,7 @@ function avail_versions() {
 			[[ -f "$ebuild" ]] || continue
 			mlsr=${ebuild#${tree%/}/${cp}/${pn}-}
 			mlsr=${mlsr%.ebuild}
-			[[ "$excl_pmask" ]] && is_package_masked $cp $mlsr && continue
+			[[ "$excl_pmask" ]] && is_package_masked "$cp" "$mlsr" "$tree" && continue
 			[[ "$excl_kmask" ]] && is_keyword_masked $cp $mlsr $tree && continue
 			[[ "$showtree" ]] && echo $mlsr ${tree%/} || echo $mlsr
 			any_printed="yes"
@@ -3124,7 +3107,7 @@ function installed_mlsrs() {
 		[[ -d "$dir" ]] || continue
 		mlsr=${dir#${VARDB_DIR}/${cp}-}
 		if [[ "$remove_masked" ]]; then
-			is_package_masked $cp $mlsr && continue
+			is_package_masked "$cp" "$mlsr" '' && continue
 			is_keyword_masked $cp $mlsr && continue
 		fi
 		echo $mlsr
@@ -3166,7 +3149,7 @@ function is_running_kernel() {
 function not_in_tree() {
 	cp=$1; mlsr=$2
 	if tree=$(best_tree $cp-$mlsr); then
-		if is_package_masked $cp $mlsr; then
+		if is_package_masked "$cp" "$mlsr" "$tree"; then
 			format_error >&2 <<END
 The package $(format_cpv $cp-$mlsr) is installed, but is masked. ${BR}Things will break.${NO} Please correct this to ensure sensible results.
 END
@@ -3331,7 +3314,7 @@ function info_action_exists() {
 		tcpv="$(resolve_depatom "$depatom")"
 		for x in "${@:3}"; do
 			[[ "$x" == */* ]] || x="$(pv_to_cpv $x)"
-			if dep_satisfies $tcpv $x; then
+			if dep_satisfies_atom "$tcpv" "$x"; then
 				echo "    $(format_taint "$cpv" "$taint")$(pads 16 "$taint")$(format_depatom "$depatom")$(pads 24 "${taint:16}${depatom}") $(format_cpv "$tcpv")"
 				any=yes
 			fi
@@ -3339,14 +3322,14 @@ function info_action_exists() {
 	done; [[ "$any" ]]; )
 }
 
-# info_action_rev-exists: --rev-exists: report which reverse deps of $1 are pulled in by any of the trailing args (via dep_satisfies).
+# info_action_rev-exists: --rev-exists: report which reverse deps of $1 are pulled in by any of the trailing args.
 function info_action_rev-exists() {
 	_smartdep "$1" \
 	| ( local any=""
 	while read pkg atom taint; do
 		for x in "${@:3}"; do
 			[[ "$x" == */* ]] || x="$(pv_to_cpv $x)"
-			if dep_satisfies $pkg $x; then
+			if dep_satisfies_atom "$pkg" "$x"; then
 				format_revdep <<<"$pkg $atom $taint"
 				any=yes
 			fi
@@ -3775,7 +3758,7 @@ function info_action_keywords() {
 		mlsr=${mlsrs[$i]}; tree=${trees[$i]}
 		cpv=$cp-$mlsr; ebuild=$tree/$cp/$pn-$mlsr.ebuild
 		[[ "$tree" == "INJECTED" ]] && inj="yes" || inj=""
-		if is_package_masked $cp $mlsr; then col="$RD"; sym="x"
+		if is_package_masked "$cp" "$mlsr" "$tree"; then col="$RD"; sym="x"
 		elif has $mlsr $installed && [[ ! -e $ebuild || $ebuild == $(extract_var_from_vardb EBUILD $cpv) ]]; then col="$BR"; sym=">"
 		elif [[ "$inj" ]]; then col="$Cy"; sym="J"
 		else col=""; sym="|"; fi
@@ -3812,14 +3795,14 @@ function info_action_versions() {
 		elif [[ "$S" == "-" ]]; then COL="$Yl"; S="$Yl$S$NO"
 		else COL="$GR"; fi
 		I=" "; M=" "
-		if is_package_masked $cp $mlsr; then 
+		if is_package_masked "$cp" "$mlsr" "$tree"; then
 			M="${RD}M$NO"; COL="$RD"
-			mask_comment="$(get_mask_comment $cp $mlsr)"
+			mask_comment="$(get_mask_comment "$cp" "$mlsr" "$tree")"
 		elif [[ -z "$inj" ]] && is_keyword_masked $cp $mlsr $tree; then 
 			M="${RD}K$NO"; COL="$RD"
 			keywords_for $cpv "$tree"
 			mask_comment="${RD}keywords: ${RESULT[*]}${NO}"
-		elif is_package_unmasked $cp $mlsr; then
+		elif is_package_unmasked "$cp" "$mlsr" "$tree"; then
 			M="${Rd}U$NO"
 		fi
 		if has "$mlsr" $installed && [[ ! -e $ebuild \
@@ -4567,11 +4550,11 @@ function package_mask_filter_inner() {
 	local depatom="$1" cp="$2" mlsr="$3" args=("${@:4}")
 	if is_keyword_masked $cp $mlsr $tree; then
 		log_message 1 "$cp-$mlsr keyword masked"
-	elif is_inclusion_masked "$cp" "$mlsr"; then
+	elif is_inclusion_masked "$cp" "$mlsr" "$tree"; then
 		log_message 1 "$cp-$mlsr inclusion masked"
-	elif is_in_maskfile "$cp" "$mlsr" $(etc_portage_files package.unmask); then
+	elif is_in_maskfile "$cp" "$mlsr" "$tree" $(etc_portage_files package.unmask); then
 		log_message 1 "$cp-$mlsr unmasked"
-	elif is_in_maskfile "$cp" "$mlsr" "$newfile" $(profile_files_extra package.mask | grep -v "$ETC_PORTAGE_DIR/package.mask"); then
+	elif is_in_maskfile "$cp" "$mlsr" "$tree" "$newfile" $(profile_files_extra package.mask | grep -v "$ETC_PORTAGE_DIR/package.mask"); then
 		log_message 1 "$cp-$mlsr otherwise masked"
 	else
 		return 0
@@ -4598,11 +4581,11 @@ function package_unmask_filter() {
 	local depatom="$1" cp="$2" mlsr="$3" args=("${@:4}")
 	if is_keyword_masked $cp $mlsr $tree; then
 		log_message 1 "$cp-$mlsr keyword masked"
-	elif is_inclusion_masked "$cp" "$mlsr"; then
+	elif is_inclusion_masked "$cp" "$mlsr" "$tree"; then
 		log_message 1 "$cp-$mlsr inclusion masked"
-	elif is_in_maskfile "$cp" "$mlsr" "$newfile"; then
+	elif is_in_maskfile "$cp" "$mlsr" "$tree" "$newfile"; then
 		log_message 1 "$cp-$mlsr already unmasked"
-	elif ! is_in_maskfile "$cp" "$mlsr" $(profile_files_extra package.mask); then
+	elif ! is_in_maskfile "$cp" "$mlsr" "$tree" $(profile_files_extra package.mask); then
 		log_message 1 "$cp-$mlsr not masked"
 	else
 		return 0
@@ -4682,24 +4665,17 @@ function bashrc_filter() {
 	# (SC2128) as if they were array operations.
 	# shellcheck disable=SC2178
 	local list="$1" out="" omitted=""
+	local branch_re='^(\|\| )?\[\[ ("?)([^ ]*)\2 == ("?)([^ ]*/[^ ]*)\4 \]\] \\'
 	# Supported syntax: [[ "$CATEGORY/$P" == app-foo/bar-2.1 ]] \
 	# || [[ "$CATEGORY/$PN" == sys-baz/zork ]] \
 	# && ...
-	# Note on regex single-quoting below: in modern bash (>=3.2 without
-	# compat31), single-quoted RHS of =~ still parses as regex — only
-	# the meta-chars escaped via backslash are forced literal. The
-	# quotes here group the pattern for readability. SC2076 warns based
-	# on the pre-3.2 / compat31 semantic; udept's script doesn't set
-	# that shopt, so the quoted form works.
-	# shellcheck disable=SC2076
-	#
 	# Note on `done <<<"$list"` below: $list here is the scalar local
 	# declared just above. Shellcheck's cross-function inference sees
 	# an array named 'list' in stacking_sort (~line 1481) and flags
 	# the redirect as SC2128 false-positive on the array shape.
 	# shellcheck disable=SC2128
 	while read -r; do
-		if [[ "$REPLY" =~ '^(\|\| )?\[\[ ("?)([^ ]*)\2 == ("?)([^ ]*/[^ ]*)\4 \]\] \\' ]]; then
+		if [[ "$REPLY" =~ $branch_re ]]; then
 			local match="${BASH_REMATCH[3]}" target="${BASH_REMATCH[5]}"
 			local cp="${target%-$VER_SHPAT*}" found="" mlsr
 			for mlsr in $(provided_mlsrs "$cp"); do 
@@ -4712,7 +4688,7 @@ function bashrc_filter() {
 					# etc. Static analysis can't trace the eval link,
 					# hence SC2034 on the seemingly-unused names.
 					# shellcheck disable=SC2034
-					{ PVR="$mlsr"; PF="$PN-$mlsr"; CATEGORY="${t_cp%/*}"; }
+					{ PVR="$mlsr"; PF="$PN-$mlsr"; CATEGORY="${cp%/*}"; }
 					for x in ${VARDB_DIR}/$cp-$mlsr/+([[:upper:]]); do
 						[[ -r "$x" ]] && read ${x##*/} <<<"$(<"$x")"
 					done
@@ -4726,7 +4702,7 @@ function bashrc_filter() {
 				log_message 1 "no installed package with $match == $target"
 				omitted="yes"
 			fi
-		elif [[ -z "$omitted" || "$out" || "$REPLY" =~ '^(\|\| )?\[\[' ]]; then
+		elif [[ -z "$omitted" || "$out" || "$REPLY" == '|| [['* || "$REPLY" == '[['* ]]; then
 			out="${out}${out:+$'\n'}${REPLY}"
 		else
 			echo "All tests failed"; return 1
@@ -4815,7 +4791,7 @@ function inspect_patch_tree_check_data_is_highest_patched() {
 		mlsrs[$i]=$mlsr
 		mlsr_trees[$i]=$mlsr_tree
 		mlsr_slots[$i]=$(slot_for "$cp-$mlsr" "$mlsr_tree")
-		is_package_masked "$cp" "$mlsr" && mlsr_pmask[$i]="yes"
+		is_package_masked "$cp" "$mlsr" "$mlsr_tree" && mlsr_pmask[$i]="yes"
 		mls="${mlsr%-r+([[:digit:]])}"; rev="${mlsr#$mls-}"
 		# Locals P/PN/PV/PR/PVR/PF/SLOT mirror Portage's standard
 		# ebuild env-var set. Only some are read by the pattern match
@@ -4953,7 +4929,7 @@ function inspect_overlay() {
 			i=${#mlsrs[@]}
 			mlsrs[$i]=$mlsr
 			mlsr_slots[$i]=$(slot_for "$cp-$mlsr" "$mlsr_tree")
-			is_package_masked "$cp" "$mlsr" && mlsr_pmask[$i]="yes"
+			is_package_masked "$cp" "$mlsr" "$mlsr_tree" && mlsr_pmask[$i]="yes"
 		done <<<"$(avail_versions "$cp" yes | mlsr_sort)"
 		if (( "${#mlsrs[@]}" == 0 )); then
 			log_message 2 "$cp not in \$PORTDIR; ignoring"
