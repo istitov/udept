@@ -45,6 +45,13 @@ setup() {
 	assert_failure
 }
 
+@test "dep_satisfies_atom: wildcard slot skips slot lookup" {
+	slot_for() { printf '%s\n' blocked >"$BATS_TEST_TMPDIR/slot_for_called"; return 1; }
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg:*'
+	assert_success
+	[ ! -e "$BATS_TEST_TMPDIR/slot_for_called" ]
+}
+
 @test "shared matcher metadata lookup is nounset-safe" {
 	set -u
 	run dep_satisfies_atom cat/pkg-2.0 '=cat/pkg-2.0:0/2::testrepo'

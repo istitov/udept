@@ -1390,7 +1390,7 @@ function dep_satisfies_atom() {
 	local test_cp=${testpkg/%-$VER_SHPAT} test_version=${testpkg#${testpkg/%-$VER_SHPAT}-}
 	[[ "$test_cp" == "$cp" ]] || return 2
 	[[ -z "$version" ]] || dep_satisfies_mlsr "$test_version" "$op" "$version" || return 1
-	if [[ "$slot" ]]; then
+	if [[ "$slot" && "$slot" != '*' && "$slot" != '=' ]]; then
 		[[ "$pkg_slot" ]] || pkg_slot=$(slot_for "$testpkg" "$tree" 2>/dev/null)
 		slot_satisfies "$pkg_slot" "$slot" || return 1
 	fi
@@ -1896,6 +1896,8 @@ memoise package_use_rules
 memoise package_use_mask
 memoise package_use_force
 memoise repo_usecomponent
+memoise slot_for
+memoise repo_for_cpv
 
 # user_package_usecomponent: emit matching /etc/portage/package.use changes.
 function user_package_usecomponent() {
