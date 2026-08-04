@@ -1100,11 +1100,12 @@ function profile_files_extra() {
 #   PORTDIR        — location of [DEFAULT] main-repo
 #   portage_trees  — space-separated list of all repo locations, ordered
 #                    highest-priority-first (ties broken by name ascending)
+#   repo_masters   — space-separated master repository names for each repo
 # Hard-fails if portageq is missing or main-repo can't be resolved.
 function read_repos_config() {
 	local section="" line k v n
 	local main_repo=""
-	declare -gA repo_loc=() repo_prio=()
+	declare -gA repo_loc=() repo_prio=() repo_masters=()
 	if ! command -v portageq >/dev/null 2>&1; then
 		format_error >&2 <<-END
 		dep needs sys-apps/portage installed: portageq is missing from
@@ -1121,6 +1122,7 @@ function read_repos_config() {
 			case "$section/$k" in
 				DEFAULT/main-repo)	main_repo="$v";;
 				*/location)		repo_loc[$section]="$v";;
+				*/masters)		repo_masters[$section]="$v";;
 				*/priority)		repo_prio[$section]="$v";;
 			esac;;
 		esac
@@ -1523,7 +1525,7 @@ function edb_tree() {
 # === VARDB / EDB METADATA + USE
 # === strip_iuse_prefixes, extract_var_from_vardb, extract_var_from_edb,
 # === extract_var, keywords_for, slot_for, pkginternal_use_for, dep_to_cps,
-# === allvirtuals, autouse, package_use_mask, usecomponent, dbuse.
+# === allvirtuals, autouse, USE-source helpers, usecomponent, dbuse.
 # ============================================================================
 
 # strip_iuse_prefixes: sed away EAPI-1+ +/- default-state prefixes on whitespace-separated IUSE list on stdin.
@@ -1719,24 +1721,55 @@ function package_is_stable() {
 	has "$ARCH" "${package_keywords[@]}"
 }
 
-# package_use_rules: emit flags from profile/repository package.* USE files
-# whose atom matches $2, retaining highest-precedence file order.
-function package_use_rules() {
-	local name=$1 cpv=$2 package flags file tree
-	local rule_files=()
-	while read -r file; do [[ "$file" ]] && rule_files+=("$file"); done < <(profile_files "$name")
-	tree=$(best_tree "$cpv" 2>/dev/null)
-	if [[ "$tree" ]]; then
-		if [[ -d "$tree/profiles/$name" ]]; then
-			while read -r file; do rule_files+=("$file"); done < <(find "$tree/profiles/$name" -type f -readable)
-		elif [[ -r "$tree/profiles/$name" ]]; then
-			rule_files+=("$tree/profiles/$name")
-		fi
+# config_path_files: emit the readable file(s) at directory $1 under name $2.
+function config_path_files() {
+	local path=$1 name=$2
+	if [[ -d "$path/$name" ]]; then
+		find "$path/$name" -type f -readable | LC_ALL=C sort
+	elif [[ -r "$path/$name" ]]; then
+		printf '%s\n' "$path/$name"
 	fi
+}
+
+# split_use_tokens: normalize whitespace-separated USE changes to one per line.
+function split_use_tokens() {
+	sed 's/[[:space:]]\+/\n/g' | sed '/^[[:space:]]*$/d'
+}
+
+# use_tokens_at: emit global USE changes from file/directory $1/$2.
+function use_tokens_at() {
+	local path=$1 name=$2 file
+	local use_files=()
+	while IFS= read -r file; do
+		[[ "$file" ]] && use_files+=("$file")
+	done < <(config_path_files "$path" "$name")
+	(( ${#use_files[@]} )) || return 0
+	kill_comments_and_blanks "${use_files[@]}" | split_use_tokens | tac
+}
+
+# package_use_rules_at: emit matching package.* USE flags rooted at $1.
+function package_use_rules_at() {
+	local path=$1 name=$2 cpv=$3 package flags file
+	local rule_files=()
+	while IFS= read -r file; do
+		[[ "$file" ]] && rule_files+=("$file")
+	done < <(config_path_files "$path" "$name")
 	(( ${#rule_files[@]} )) || return 0
 	while read -r package flags; do
 		dep_satisfies "$cpv" "$package" && printf '%s\n' "$flags"
-	done < <(kill_comments_and_blanks "${rule_files[@]}")
+	done < <(kill_comments_and_blanks "${rule_files[@]}") \
+		| split_use_tokens | tac
+}
+
+# package_use_rules: emit matching active-profile and package-repository rules.
+# Kept as the combined interface used by mask/force evaluation.
+function package_use_rules() {
+	local name=$1 cpv=$2 path tree
+	while IFS= read -r path; do
+		[[ "$path" ]] && package_use_rules_at "$path" "$name" "$cpv"
+	done <<<"$profile_stack"
+	tree=$(best_tree "$cpv" 2>/dev/null)
+	[[ "$tree" ]] && package_use_rules_at "$tree/profiles" "$name" "$cpv"
 }
 
 function package_use_force() {
@@ -1750,8 +1783,8 @@ function package_use_force() {
 	) | sed 's/[[:space:]]\+/\n/g' | stacking_sort yes
 }
 
-# make_defaults_use: conservative parser for the incremental USE assignment in
-# repository profiles/make.defaults. Quoted values and USE+= are supported;
+# make_defaults_use: conservative parser for incremental USE assignments in
+# profile/repository make.defaults. Quoted values and USE+= are supported;
 # arbitrary shell is deliberately not evaluated.
 function make_defaults_use() {
 	local file=$1
@@ -1762,18 +1795,81 @@ function make_defaults_use() {
 		b
 		:use
 		s/^["'"'"']//; s/["'"'"'][[:space:]]*$//
+		# Portage clears USE from the expansion map before reading each
+		# profile node (config.py), so the conventional ${USE} placeholder
+		# does not become a literal flag or re-apply a parent component.
+		s/${USE}//g
 		p
-	' "$file"
+	' "$file" | split_use_tokens | tac
+}
+
+# _repository_chain_walk: recursive worker sharing repository_chain's dynamic seen_repos.
+function _repository_chain_walk() {
+	local repo=$1 master i
+	local -a masters=()
+	[[ "$repo" && ! ${seen_repos[$repo]:-} ]] || return 0
+	seen_repos[$repo]=1
+	printf '%s\n' "$repo"
+	read -r -a masters <<<"${repo_masters[$repo]:-}"
+	for ((i=${#masters[@]}-1; i>=0; --i)); do
+		master=${masters[$i]}
+		_repository_chain_walk "$master"
+	done
+}
+
+# repository_chain: emit a repository and its masters, highest precedence first.
+function repository_chain() {
+	local -A seen_repos=()
+	_repository_chain_walk "$1"
+}
+
+# profile_defaults_usecomponent: mirror config.py's "defaults" USE source.
+function profile_defaults_usecomponent() {
+	local cpv=$1 path
+	[[ "$cpv" ]] || return 0
+	while IFS= read -r path; do
+		[[ "$path" ]] || continue
+		# package/flag-specific settings have higher priority than the
+		# profile's global defaults. The profile stack itself is already
+		# ordered child before parent (highest precedence first).
+		if package_is_stable "$cpv"; then
+			package_use_rules_at "$path" package.use.stable "$cpv"
+		fi
+		package_use_rules_at "$path" package.use "$cpv"
+		package_is_stable "$cpv" && use_tokens_at "$path" use.stable
+		make_defaults_use "$path/make.defaults"
+	done <<<"$profile_stack"
 }
 
 function repo_usecomponent() {
-	local cpv=$1 tree
+	local cpv=$1 tree repo path
 	[[ "$cpv" ]] || return 0
 	tree=$(best_tree "$cpv" 2>/dev/null)
 	[[ "$tree" ]] || return 0
-	package_use_rules package.use "$cpv"
-	package_is_stable "$cpv" && package_use_rules package.use.stable "$cpv"
-	make_defaults_use "$tree/profiles/make.defaults"
+	repo=$(repo_name_for_tree "$tree")
+	# Portage config.py builds "repo" from the package repository's masters
+	# followed by that repository, so emit the reverse (high-to-low) order
+	# expected by stacking_sort. A tree not named in repos.conf still gets its
+	# own repository-level settings as a conservative fallback.
+	if [[ "$repo" ]]; then
+		while IFS= read -r repo; do
+			path=${repo_loc[$repo]:-}
+			[[ "$path" ]] || continue
+			path=$path/profiles
+			if package_is_stable "$cpv"; then
+				package_use_rules_at "$path" package.use.stable "$cpv"
+			fi
+			package_use_rules_at "$path" package.use "$cpv"
+			package_is_stable "$cpv" && use_tokens_at "$path" use.stable
+			make_defaults_use "$path/make.defaults"
+		done < <(repository_chain "$repo")
+	else
+		path=$tree/profiles
+		package_is_stable "$cpv" && package_use_rules_at "$path" package.use.stable "$cpv"
+		package_use_rules_at "$path" package.use "$cpv"
+		package_is_stable "$cpv" && use_tokens_at "$path" use.stable
+		make_defaults_use "$path/make.defaults"
+	fi
 }
 
 # Repeated package.use filtering revisits the same CPVs across several rule
@@ -1784,7 +1880,22 @@ memoise package_use_mask
 memoise package_use_force
 memoise repo_usecomponent
 
-# usecomponent: echo USE flags contributed by one USE_ORDER component.
+# user_package_usecomponent: emit matching /etc/portage/package.use changes.
+function user_package_usecomponent() {
+	local cpv=$1 package flags file
+	local rule_files=()
+	[[ "$cpv" ]] || return 0
+	while IFS= read -r file; do
+		[[ "$file" ]] && rule_files+=("$file")
+	done < <(etc_portage_files package.use)
+	(( ${#rule_files[@]} )) || return 0
+	while read -r package flags; do
+		dep_satisfies "$cpv" "$package" && printf '%s\n' "$flags"
+	done < <(kill_comments_and_blanks "${rule_files[@]}") \
+		| split_use_tokens | tac
+}
+
+# usecomponent: print USE flags contributed by one USE_ORDER component.
 function usecomponent() {
 	# return a USE component, one flag per line, highest priority first
 	# TODO FIXME not correct yet - though OK for default case
@@ -1792,24 +1903,22 @@ function usecomponent() {
 	# See http://bugs.gentoo.org/show_bug.cgi?id=61732
 	local component="$1" cpv="$2"
 	case "$component" in
-		env) sed 's/[[:space:]]\+/\n/g' <<<"$USE" | tac;;
-		pkg) [[ "$cpv" ]] && \
-			kill_comments_and_blanks $(etc_portage_files package.use) \
-			| while read package use; do
-				dep_satisfies "$cpv" $package && echo $use
-			done | sed 's/[[:space:]]\+/\n/g';;
-		conf) sed 's/[[:space:]]\+/\n/g' <<<"$__conf_USE";;
-		pkgprofile) [[ "$cpv" ]] && package_use_rules package.use "$cpv";;
+		env) split_use_tokens <<<"$USE" | tac;;
+		pkg) user_package_usecomponent "$cpv";;
+		conf) split_use_tokens <<<"$__conf_USE" | tac;;
+		# config.py maps active-profile make.defaults and package.use rules
+		# to "defaults"; "repo" is reserved for repository-wide rules.
+		# Keep pkgprofile as a legacy alias for profile package.use only.
+		pkgprofile) [[ "$cpv" ]] && while IFS= read -r path; do
+			[[ "$path" ]] && package_use_rules_at "$path" package.use "$cpv"
+		done <<<"$profile_stack";;
 		auto) autouse;;
-		defaults) [[ "$cpv" ]] && {
-			package_use_rules package.use "$cpv"
-			package_is_stable "$cpv" && package_use_rules package.use.stable "$cpv"
-		};;
+		defaults) profile_defaults_usecomponent "$cpv";;
 		# pkginternal and env.d had empty placeholder cases above the
 		# real handlers — the placeholders shadowed the implementations
 		# (bash case takes the first match), so pkginternal_use_for and
 		# the profile.env sed were dead code. USE_ORDER defaults to
-		# 'env:pkg:conf:defaults:pkginternal:env.d' (line below in
+		# 'env:pkg:conf:defaults:pkginternal:features:repo:env.d' (below in
 		# dbuse), so this affected USE resolution for every package
 		# whose IUSE defaults (pkginternal) or profile.env exports
 		# (env.d) contributed flags. Fixed by removing the placeholders.
@@ -1819,8 +1928,11 @@ function usecomponent() {
 		# Prefix, etc.). Suppress sed's "can't read" stderr — its absence
 		# is the no-env-USE case, not an error. (Pre-case-shadow-fix in
 		# 8673115 this branch was unreachable so the missing-file error
-		# never surfaced; it became visible after activation.)
-		env.d) sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' "$ETC_PORTAGE_DIR/profile.env" 2>/dev/null;;
+		# never surfaced; it became visible after activation.) Each USE
+		# producer must still emit one token per line for stacking_sort.
+		env.d) [[ -r "$ETC_PORTAGE_DIR/profile.env" ]] || return 1
+			sed 's/^export USE='"'"'\(.*\)'"'"'/\1/;t;d' "$ETC_PORTAGE_DIR/profile.env" \
+				| split_use_tokens | tac;;
 		features) has test $FEATURES && echo test;;
 		repo) repo_usecomponent "$cpv";;
 		*) format_error <<<"Unknown USE component: $component" >&2;;

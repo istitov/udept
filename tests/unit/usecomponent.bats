@@ -6,8 +6,8 @@
 # statement (`pkginternal);;`, `env.d);;`, `repo);;`) silently shadowed
 # the real handlers below them. The default USE_ORDER includes both
 # `pkginternal` and `env.d`, so every call to dbuse() walked through
-# them and produced nothing — udept was doing USE resolution missing
-# two of its six tiers since the modern-era refactor. Commit 8673115
+# them and produced nothing — udept was doing USE resolution without
+# two active tiers since the modern-era refactor. Commit 8673115
 # removed the shadowing placeholders, activating:
 #
 #   - pkginternal_use_for(cpv): reads IUSE from the cpv's metadata
@@ -33,6 +33,26 @@ setup() {
 	# $ETC_PORTAGE_DIR/profile.env.
 	ETC_PORTAGE_DIR="$BATS_TEST_TMPDIR/etc-portage"
 	mkdir -p "$ETC_PORTAGE_DIR"
+}
+
+@test "split_use_tokens: whitespace never produces empty flag records" {
+	run split_use_tokens <<<' alpha  beta '
+	[ "$status" -eq 0 ]
+	[ "${#lines[@]}" -eq 2 ]
+	[[ "$output" == $'alpha\nbeta' ]]
+}
+
+@test "usecomponent pkg: missing package.use is an empty component" {
+	run usecomponent pkg cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ -z "$output" ]]
+}
+
+@test "usecomponent pkg: matching multi-flag rules are split high-first" {
+	printf '%s\n' 'cat/pkg first -second third' >"$ETC_PORTAGE_DIR/package.use"
+	run usecomponent pkg cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ "$output" == $'third\n-second\nfirst' ]]
 }
 
 # Helper: pin extract_var to a fixed IUSE return for the test.
@@ -123,7 +143,7 @@ EOF
 	[ "$status" -eq 0 ]
 	# Pre-fix this returned empty because the `env.d);;` placeholder
 	# above the real handler swallowed the dispatch.
-	[[ "$output" == 'alpha beta -gamma' ]]
+	[[ "$output" == $'-gamma\nbeta\nalpha' ]]
 }
 
 @test "usecomponent env.d: missing profile.env → non-zero exit, no USE output" {
@@ -165,7 +185,114 @@ EOF
 	PORTDIR="$repo"
 	run usecomponent repo cat/pkg-1
 	[ "$status" -eq 0 ]
-	[[ "$output" == 'repo-flag -other' ]]
+	[[ "$output" == $'-other\nrepo-flag' ]]
+}
+
+@test "usecomponent defaults: profile package rules override make.defaults per node" {
+	local child="$BATS_TEST_TMPDIR/child" parent="$BATS_TEST_TMPDIR/parent"
+	mkdir -p "$child" "$parent"
+	printf '%s\n' 'USE="child-default -shared"' >"$child/make.defaults"
+	printf '%s\n' 'cat/pkg child-rule shared' >"$child/package.use"
+	printf '%s\n' 'USE="parent-default shared"' >"$parent/make.defaults"
+	printf '%s\n' 'cat/pkg parent-rule' >"$parent/package.use"
+	profile_stack=$(printf '%s\n%s\n' "$child" "$parent")
+	package_is_stable() { return 1; }
+
+	run usecomponent defaults cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ "$output" == $'shared\nchild-rule\n-shared\nchild-default\nparent-rule\nshared\nparent-default' ]]
+}
+
+@test "usecomponent defaults: stable rules follow Portage precedence" {
+	local profile="$BATS_TEST_TMPDIR/profile"
+	mkdir -p "$profile"
+	printf '%s\n' 'USE="${USE} global-default"' >"$profile/make.defaults"
+	printf '%s\n' 'global-stable' >"$profile/use.stable"
+	printf '%s\n' 'cat/pkg package-rule' >"$profile/package.use"
+	printf '%s\n' 'cat/pkg package-stable-rule' >"$profile/package.use.stable"
+	profile_stack=$profile
+	package_is_stable() { return 0; }
+
+	run usecomponent defaults cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ "$output" == $'package-stable-rule\npackage-rule\nglobal-stable\nglobal-default' ]]
+}
+
+@test "usecomponent repo: repository rules exclude profiles and include masters" {
+	local master="$BATS_TEST_TMPDIR/master" overlay="$BATS_TEST_TMPDIR/overlay"
+	local active="$BATS_TEST_TMPDIR/active-profile"
+	mkdir -p "$master/profiles" "$overlay/profiles" "$active"
+	printf '%s\n' 'USE="master-default"' >"$master/profiles/make.defaults"
+	printf '%s\n' 'cat/pkg master-rule' >"$master/profiles/package.use"
+	printf '%s\n' 'USE="overlay-default -shared"' >"$overlay/profiles/make.defaults"
+	printf '%s\n' 'cat/pkg overlay-rule shared' >"$overlay/profiles/package.use"
+	printf '%s\n' 'cat/pkg profile-only' >"$active/package.use"
+	profile_stack=$active
+	declare -gA repo_loc=([master]="$master" [overlay]="$overlay")
+	declare -gA repo_masters=([overlay]='master')
+	best_tree() { printf '%s\n' "$overlay"; }
+	package_is_stable() { return 1; }
+
+	run usecomponent repo cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ "$output" == $'shared\noverlay-rule\n-shared\noverlay-default\nmaster-rule\nmaster-default' ]]
+	[[ "$output" != *profile-only* ]]
+}
+
+@test "read_repos_config records repository masters" {
+	portageq() {
+		printf '%s\n' \
+			'[DEFAULT]' \
+			'main-repo = gentoo' \
+			'[gentoo]' \
+			'location = /repos/gentoo' \
+			'[overlay]' \
+			'location = /repos/overlay' \
+			'masters = gentoo'
+	}
+	read_repos_probe() {
+		read_repos_config
+		printf '%s|%s|%s\n' "$PORTDIR" "${repo_loc[overlay]}" "${repo_masters[overlay]}"
+	}
+
+	run read_repos_probe
+	[ "$status" -eq 0 ]
+	assert_output '/repos/gentoo|/repos/overlay|gentoo'
+}
+
+@test "usecomponent pkgprofile: legacy component excludes repository rules" {
+	local repo="$BATS_TEST_TMPDIR/repo" active="$BATS_TEST_TMPDIR/active-profile"
+	mkdir -p "$repo/profiles" "$active"
+	printf '%s\n' 'cat/pkg repo-only' >"$repo/profiles/package.use"
+	printf '%s\n' 'cat/pkg profile-one -profile-two' >"$active/package.use"
+	profile_stack=$active
+	portage_trees=$repo
+	PORTDIR=$repo
+
+	run usecomponent pkgprofile cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ "$output" == $'-profile-two\nprofile-one' ]]
+}
+
+@test "dbuse: later tokens win within a component and defaults override repo" {
+	local profile="$BATS_TEST_TMPDIR/profile" repo="$BATS_TEST_TMPDIR/repo"
+	mkdir -p "$profile" "$repo/profiles"
+	printf '%s\n' 'USE="local -local -repo-flag"' >"$profile/make.defaults"
+	printf '%s\n' 'USE="repo-flag repo-only"' >"$repo/profiles/make.defaults"
+	profile_stack=$profile
+	portage_trees=$repo
+	PORTDIR=$repo
+	USE_ORDER='defaults:repo'
+	ARCH= USE_EXPAND=
+	package_use_force() { :; }
+	package_use_mask() { :; }
+	package_is_stable() { return 1; }
+
+	run dbuse cat/pkg-1
+	[ "$status" -eq 0 ]
+	assert_output --partial repo-only
+	refute_output --partial repo-flag
+	refute_output --partial local
 }
 
 # --- Unknown component ---------------------------------------------------
