@@ -1635,18 +1635,21 @@ function allvirtuals() {
 	set_xterm_title "Calculating virtuals... walking virtual/ category"
 	trap return SIGPIPE
 	(
-		local tree cp_dir cp ebuild cpv
+		local tree cp_dir cp ebuild cpv mlsr
 		for tree in $portage_trees; do
 			[[ -d "$tree/virtual" ]] || continue
 			for cp_dir in "$tree"/virtual/*; do
 				[[ -d "$cp_dir" ]] || continue
 				cp="virtual/${cp_dir##*/}"
-				# One ebuild per virtual is enough: providers rarely vary
-				# across versions, and overlays are tie-broken by phase 1's
-				# priority ordering of $portage_trees.
+				# Providers may vary across versions. Include every visible
+				# ebuild, while excluding versions hidden by package masks or
+				# keyword policy in their originating repository.
 				for ebuild in "$cp_dir"/*.ebuild; do
 					[[ -f "$ebuild" ]] || continue
 					cpv="virtual/${ebuild##*/}"; cpv="${cpv%.ebuild}"
+					mlsr=${cpv#${cp}-}
+					is_package_masked "$cp" "$mlsr" "$tree" && continue
+					is_keyword_masked "$cp" "$mlsr" "$tree" && continue
 					( extract_var RDEPEND "$cpv" "$tree"
 					  extract_var DEPEND  "$cpv" "$tree"
 					) | dep_to_cps | while read provider; do
