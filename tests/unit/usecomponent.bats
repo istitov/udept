@@ -203,6 +203,21 @@ EOF
 	[[ "$output" == $'shared\nchild-rule\n-shared\nchild-default\nparent-rule\nshared\nparent-default' ]]
 }
 
+@test "profile_stack_read: local dir prevents recursion from corrupting sibling-relative parent entries" {
+	local child="$BATS_TEST_TMPDIR/child"
+	mkdir -p "$child/first" "$child/second"
+	printf '%s\n' 'first' 'second' >"$child/parent"
+	# A parent file on first forces a recursive call and would overwrite
+	# global `dir` without local declarations.
+	touch "$child/first/parent"
+
+	run profile_stack_read "$child" first second
+	[ "$status" -eq 0 ]
+	[[ "${#lines[@]}" -eq 2 ]]
+	[[ "${lines[0]}" == "$child/first" ]]
+	[[ "${lines[1]}" == "$child/second" ]]
+}
+
 @test "usecomponent defaults: stable rules follow Portage precedence" {
 	local profile="$BATS_TEST_TMPDIR/profile"
 	mkdir -p "$profile"

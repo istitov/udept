@@ -1061,7 +1061,8 @@ for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 
 # profile_stack_read: recursively walk profile parent links from $1+$@, emit each profile dir; supports repo:path refs.
 function profile_stack_read() {
-	dir="$1"; shift
+	local dir="$1" rel pdir repo subpath
+	shift
 	for rel in "$@"; do
 		case "$rel" in
 		*:*)	repo="${rel%%:*}"; subpath="${rel#*:}"
@@ -1074,6 +1075,7 @@ function profile_stack_read() {
 		[[ -r "$pdir/parent" ]] && profile_stack_read "$pdir" \
 				$(kill_comments_and_blanks "$pdir/parent")
 	done
+	return 0
 }
 
 # profile_files: for each profile in $profile_stack, emit readable $profile/$1 (files inside if directory).
