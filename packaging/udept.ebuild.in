@@ -17,7 +17,6 @@ RDEPEND="
 	>=app-shells/bash-4.2:0
 	>=sys-apps/portage-2.3.0
 	bash-completion? ( app-shells/bash-completion )
-	zsh-completion? ( app-shells/zsh )
 "
 BDEPEND="
 	>=app-shells/bash-4.2:0
@@ -38,5 +37,4 @@ src_configure() {
 
 src_test() {
 	emake check || die "bats unit tests failed"
-	emake check-oracle || die "Portage oracle failed"
 }

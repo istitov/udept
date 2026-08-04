@@ -29,6 +29,7 @@ EXTRA_DIST = \
 	tests/unit/ask_install_new_file.bats \
 	tests/unit/action_modes.bats \
 	tests/unit/atom_match.bats \
+	tests/unit/matcher_unification.bats \
 	tests/unit/filter_world.bats \
 	tests/unit/install_new_file.bats \
 	tests/unit/html_render.bats \
