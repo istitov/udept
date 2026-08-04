@@ -1967,8 +1967,8 @@ function dbuse() {
 		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults:pkginternal:features:repo:env.d"
 		(
 			echo $ARCH
+			package_use_mask "$cpv" | sed -e 's/^[-+]//' -e 's/^/-/'
 			package_use_force "$cpv"
-			package_use_mask "$cpv" | sed -e 's/^/-/'
 			for component in ${USE_ORDER//:/ }; do
 				usecomponent $component "$@"
 			done

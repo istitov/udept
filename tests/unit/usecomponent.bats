@@ -310,6 +310,23 @@ EOF
 	refute_output --partial local
 }
 
+@test "dbuse: package.use.mask overrides package.use.force" {
+	local profile="$BATS_TEST_TMPDIR/profile"
+	mkdir -p "$profile"
+	profile_stack=$profile
+	USE_ORDER='features'
+	ARCH=
+	USE_EXPAND=
+	package_use_mask() { printf '%s\n' gpm; }
+	package_use_force() { printf '%s\n' gpm; }
+
+	run dbuse cat/pkg-1
+	[ "$status" -eq 0 ]
+	# package.use.force is lower priority than package.use.mask, so
+	# the final active-USE set does not contain this flag.
+	[[ -z "$output" ]]
+}
+
 # --- Unknown component ---------------------------------------------------
 
 @test "usecomponent unknown: routes to format_error, no stdout output" {
