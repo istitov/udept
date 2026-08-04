@@ -684,7 +684,7 @@ trap 'exit 1' SIGINT
 # A Portage library written in bash, for bash scripts.
 # Designed to be lightweight yet full-featured.
 # Copyright (c) 2004 Ed Catmur <ed@catmur.co.uk>
-# Licensed under the GPL, version 3 or later.
+# Licensed under the GPL, version 3.
 
 # Conventions:
 # Whenever you see "mlsr" that means a full version specifier:

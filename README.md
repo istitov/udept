@@ -277,5 +277,5 @@ for each phase live in `tests/`.
 &lt;ed@catmur.co.uk&gt; and contributors. The 0.6.0 modernization was carried
 out by Ivan S. Titov.
 
-Distributed under the terms of the GNU General Public License version 3 or
-later — see `LICENSE`. NO WARRANTY.
+Distributed under the terms of the GNU General Public License version 3 —
+see `LICENSE`. NO WARRANTY.

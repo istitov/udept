@@ -188,4 +188,4 @@ named `modernization-*` can stay unsigned during iteration.
 ## License
 
 By contributing you agree that your changes are licensed under
-GPL-3.0-or-later (the project's license; see [`COPYING`](COPYING)).
+GPL-3.0-only (the project's license; see [`COPYING`](COPYING)).
