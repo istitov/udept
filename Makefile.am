@@ -16,6 +16,7 @@ EXTRA_DIST = \
 	tests/unit/world_sets_expand.bats \
 	tests/unit/crunch_depends.bats \
 	tests/unit/format_atom_for_emerge.bats \
+	tests/unit/format_depatom.bats \
 	tests/unit/format_revdep.bats \
 	tests/unit/required_use.bats \
 	tests/unit/required_use_action.bats \

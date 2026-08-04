@@ -53,3 +53,54 @@ setup() {
 	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[!foo=]' '' '' cat/parent-1
 	assert_failure
 }
+
+@test "conditional USE dependencies parse defaults before evaluating parent state" {
+	mkdir -p "$VARDB_DIR/cat/parent-1"
+	printf 'missing foo\n' >"$VARDB_DIR/cat/parent-1/IUSE"
+	printf 'missing foo\n' >"$VARDB_DIR/cat/parent-1/USE"
+
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[missing(-)?]' '' '' cat/parent-1
+	assert_failure
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[missing(+)?]' '' '' cat/parent-1
+	assert_success
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[missing(-)=]' '' '' cat/parent-1
+	assert_failure
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[!missing(-)?]' '' '' cat/parent-1
+	assert_success
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[-missing(+)]'
+	assert_failure
+}
+
+@test "multilib conditional USE group remains matchable" {
+	local abi_flags='abi_mips_n32 abi_mips_n64 abi_mips_o32 abi_s390_32 abi_s390_64 abi_x86_32 abi_x86_64 abi_x86_x32'
+	printf '%s\n' "$abi_flags" >"$VARDB_DIR/cat/pkg-2.0/IUSE"
+	printf 'abi_x86_64\n' >"$VARDB_DIR/cat/pkg-2.0/USE"
+	mkdir -p "$VARDB_DIR/cat/parent-1"
+	printf '%s\n' "$abi_flags" >"$VARDB_DIR/cat/parent-1/IUSE"
+	printf 'abi_x86_64\n' >"$VARDB_DIR/cat/parent-1/USE"
+
+	run dep_satisfies_atom cat/pkg-2.0 \
+		'cat/pkg[abi_mips_n32(-)?,abi_mips_n64(-)?,abi_mips_o32(-)?,abi_s390_32(-)?,abi_s390_64(-)?,abi_x86_32(-)?,abi_x86_64(-)?,abi_x86_x32(-)?]' \
+		'' '' cat/parent-1
+	assert_success
+}
+
+@test "_smartdep retains a revdep whose atom uses a conditional default" {
+	mkdir -p "$VARDB_DIR/cat/parent-1"
+	printf 'foo\n' >"$VARDB_DIR/cat/parent-1/IUSE"
+	printf 'foo\n' >"$VARDB_DIR/cat/parent-1/USE"
+	WORLD_FILE="$BATS_TEST_TMPDIR/world"
+	: >"$WORLD_FILE"
+	allprofilepackages=
+
+	provided_mlsrs() { printf '2.0\n'; }
+	avail_versions() { printf '2.0\n'; }
+	potential_revdepends() { printf 'cat/parent-1\n'; }
+	resdepend() { printf '%s\n' 'cat/pkg[foo(-)?] '; }
+	virtuals_from() { :; }
+	world_sets_expand() { :; }
+	is_running_kernel() { return 1; }
+
+	run _smartdep cat/pkg-2.0
+	assert_output 'cat/parent-1 cat/pkg[foo(-)?]'
+}

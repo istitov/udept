@@ -914,41 +914,55 @@ function format_atom_for_emerge() {
 	echo "$atom"
 }
 
-# format_taint: echo coloured USE-condition tokens for cpv $1; colour reflects active/!/inverted USE state.
+# format_taint: print coloured USE-condition tokens for cpv $1; colour reflects active/!/inverted USE state.
 function format_taint() {
-	local cpv="$1"
-	for tok in "${@:2}"; do
+	local cpv="$1" tok
+	local -a taint_tokens=() active_use=()
+	read -r -a taint_tokens <<<"${*:2}"
+	read -r -a active_use <<<"$(dbuse "$cpv")"
+	for tok in "${taint_tokens[@]}"; do
 		if [[ $tok != *\? ]]; then
-			echo -n "${Gr}$tok${NO}"' '
+			printf '%s ' "${Gr}$tok${NO}"
 			continue
 		fi
 		tok=${tok%\?}
 		if [[ $tok == \!* ]]; then
-			if has ${tok:1} $(dbuse $cpv); then
-				echo -n "${Bl}$tok${NO}"'? '
+			if has "${tok:1}" "${active_use[@]}"; then
+				printf '%s? ' "${Bl}$tok${NO}"
 			else
-				echo -n "${BL}$tok${NO}"'? '
+				printf '%s? ' "${BL}$tok${NO}"
 			fi
 		else
-			if has $tok $(dbuse $cpv); then
-				echo -n "${RD}$tok${NO}"'? '
+			if has "$tok" "${active_use[@]}"; then
+				printf '%s? ' "${RD}$tok${NO}"
 			else
-				echo -n "${Rd}$tok${NO}"'? '
+				printf '%s? ' "${Rd}$tok${NO}"
 			fi
 		fi
 	done
 }
 
-# format_depatom: echo coloured depatom — bang/op vs cpv vs '*' wildcard, colour varies by virtual/blocker.
+# format_depatom: print a coloured depatom; colour varies for virtuals and blockers.
 function format_depatom() {
-	batom="$1"; asvirtual="$2"
-	atom="${batom#!}"; bang="${batom/%$atom}"
-	cpvs=${atom/#[<>]=}; cpvs=${cpvs/#[=~<>]}; cpvs=${cpvs#\*}
-	vs=${atom%$cpvs}
-	cpv=${cpvs%\*}; star=${cpvs#$cpv}
-	if [[ "$asvirtual" ]]; then col=FC; elif [[ "${bang}" ]]; then col=RD;
-	else col=Gr; fi
-	echo $bang$vs${!col}$cpv${NO}${star}
+	local batom=$1 asvirtual=$2 col cpv suffix star=''
+	local ATOM_RAW ATOM_BLOCKER ATOM_OP ATOM_CP ATOM_VERSION
+	local ATOM_SLOT ATOM_REPO ATOM_USE
+	atom_parse "$batom" || { printf '%s\n' "$batom"; return; }
+	if [[ "$ATOM_VERSION" == *\* ]]; then
+		star='*'
+		ATOM_VERSION=${ATOM_VERSION%\*}
+	fi
+	cpv=$ATOM_CP${ATOM_VERSION:+-$ATOM_VERSION}
+	suffix=$star
+	[[ "$ATOM_SLOT" ]] && suffix="${suffix}:$ATOM_SLOT"
+	[[ "$ATOM_REPO" ]] && suffix="${suffix}::$ATOM_REPO"
+	[[ "$ATOM_USE" ]] && suffix="${suffix}[$ATOM_USE]"
+	if [[ "$asvirtual" ]]; then col=FC
+	elif [[ "$ATOM_BLOCKER" ]]; then col=RD
+	else col=Gr
+	fi
+	printf '%s%s%s%s%s%s\n' \
+		"$ATOM_BLOCKER" "$ATOM_OP" "${!col}" "$cpv" "$NO" "$suffix"
 }
 
 # format_revdep: read 'deppkg depatom taint' lines on stdin; print one formatted revdep per line, return count via $?.
@@ -966,13 +980,13 @@ function format_revdep() {
 		fi
 		case $deppkg in
 			WORLD )
-			echo "$indent${BL}$(pad 35 "WORLD FILE")${NO}  $(format_depatom ${depatom} ${asvirtual})";;
+			echo "$indent${BL}$(pad 35 "WORLD FILE")${NO}  $(format_depatom "$depatom" "$asvirtual")";;
 			SYSTEM )
-			echo "$indent${YL}$(pad 35 "SYSTEM PROFILE")${NO}  $(format_depatom ${depatom} ${asvirtual})";;
+			echo "$indent${YL}$(pad 35 "SYSTEM PROFILE")${NO}  $(format_depatom "$depatom" "$asvirtual")";;
 			KERNEL )
 			echo "$indent${RD}RUNNING KERNEL${NO}";;
 			* )
-			echo "$indent$(format_cpv $deppkg)$(pads 35 $deppkg)  $(format_taint "$deppkg" ${taint})$(format_depatom ${depatom} ${asvirtual})";;
+			echo "$indent$(format_cpv "$deppkg")$(pads 35 "$deppkg")  $(format_taint "$deppkg" "$taint")$(format_depatom "$depatom" "$asvirtual")";;
 		esac
 	done
 	return $ndeps
@@ -1279,14 +1293,19 @@ function atom_use_satisfies() {
 	parent_use=${parent:+$(dbuse "$parent")}
 	while IFS= read -r tok; do
 		[[ "$tok" ]] || continue
-		default=unknown
-		case "$tok" in *\(\+\)) default=on; tok=${tok%\(\+\)};; *\(-\)) default=off; tok=${tok%\(-\)};; esac
 		conditional='' invert='' require_on=''
 		case "$tok" in
-			'!'*'?') invert=yes; conditional='?'; flag=${tok#!}; flag=${flag%?};;
-			'!'*'=') invert=yes; conditional='='; flag=${tok#!}; flag=${flag%=};;
-			*'?') conditional='?'; flag=${tok%?};;
-			*'=') conditional='='; flag=${tok%=};;
+			'!'*'?') invert=yes; conditional='?'; tok=${tok#!}; tok=${tok%\?};;
+			'!'*'=') invert=yes; conditional='='; tok=${tok#!}; tok=${tok%=};;
+			*'?') conditional='?'; tok=${tok%\?};;
+			*'=') conditional='='; tok=${tok%=};;
+		esac
+		default=unknown
+		case "$tok" in
+			*\(\+\)) default=on; tok=${tok%\(\+\)};;
+			*\(-\)) default=off; tok=${tok%\(-\)};;
+		esac
+		case "$tok" in
 			-*) require_on=no; flag=${tok#-};;
 			*) require_on=yes; flag=$tok;;
 		esac
@@ -2653,7 +2672,7 @@ function _smartdep() {
 				if ! echo "${cands}" | while read candidate; do
 					dep_satisfies_atom "${needle}-${candidate}" "$depatom" "" "" "$deppkg" && break
 				done; then
-					echo $deppkg $depatom $taint
+					printf '%s %s%s\n' "$deppkg" "$depatom" "${taint:+ $taint}"
 					[[ "$exclude" ]] && return 1
 					break
 				else
@@ -3124,16 +3143,16 @@ function print_depstring() {
 		\)  ) indent="${indent#    }"; echo "$indent$tok";;
 		*\? ) taint="$tok ";;
 		\(  ) 
-		echo "$indent$(format_taint $cpv $taint)${or:+${FC}||${NO} }$tok"
+		echo "$indent$(format_taint "$cpv" "$taint")${or:+${FC}||${NO} }$tok"
 		indent="$indent    "; taint=""; or="";;
 		"||"  ) or="$tok ";;
 		\!* )
-		echo "$indent$(format_taint $cpv $taint)${or:+${FC}||${NO} }${RD}$tok${NO}"
+		echo "$indent$(format_taint "$cpv" "$taint")${or:+${FC}||${NO} }${RD}$tok${NO}"
 		taint=""; or="";;
 		*   )
 		dcpv="$(resolve_depatom "${tok}")" \
 		&& dcpv="$(format_cpv $dcpv)" || dcpv="${RD}!!!${NO}"
-		echo "$indent$(format_taint $cpv $taint)${or:+${FC}||${NO} }$(format_depatom $tok)$(pads 40 "$indent$taint$or$tok") $dcpv"
+		echo "$indent$(format_taint "$cpv" "$taint")${or:+${FC}||${NO} }$(format_depatom "$tok")$(pads 40 "$indent$taint$or$tok") $dcpv"
 		taint=""; or="";;
 	esac; done
 }
@@ -3167,7 +3186,7 @@ function info_action_depends() {
 			[[ "$opt_arg_unique_depends" ]] && continue
 			f_cpv=""
 		else
-			tcpv="$(resolve_depatom ${depatom})" \
+			tcpv="$(resolve_depatom "$depatom")" \
 			&& f_cpv="$(format_cpv $tcpv)" || f_cpv="${RD}!!!${NO}"
 			if [[ "$opt_arg_unique_depends" ]]; then
 				has_revdepend $tcpv "" "$excl" && continue
@@ -3176,7 +3195,7 @@ function info_action_depends() {
 		if [[ "$opt_arg_for_emerge" ]]; then
 			[[ "$tcpv" ]] && format_atom_for_emerge "$tcpv"
 		else
-			echo "    $(format_taint $cpv ${taint})$(pads 16 "$taint")$(format_depatom ${depatom})$(pads 24 "${taint:16}${depatom}") $f_cpv"
+			echo "    $(format_taint "$cpv" "$taint")$(pads 16 "$taint")$(format_depatom "$depatom")$(pads 24 "${taint:16}${depatom}") $f_cpv"
 		fi
 	done
 	echo
@@ -3190,11 +3209,11 @@ function info_action_exists() {
 	while read depatom taint; do
 		[[ "$depatom" ]] || continue
 		[[ "$depatom" == !* ]] && continue
-		tcpv="$(resolve_depatom ${depatom})"
+		tcpv="$(resolve_depatom "$depatom")"
 		for x in "${@:3}"; do
 			[[ "$x" == */* ]] || x="$(pv_to_cpv $x)"
 			if dep_satisfies $tcpv $x; then
-				echo "    $(format_taint "$cpv" ${taint})$(pads 16 "$taint")$(format_depatom ${depatom})$(pads 24 "${taint:16}${depatom}") $(format_cpv $tcpv)"
+				echo "    $(format_taint "$cpv" "$taint")$(pads 16 "$taint")$(format_depatom "$depatom")$(pads 24 "${taint:16}${depatom}") $(format_cpv "$tcpv")"
 				any=yes
 			fi
 		done
