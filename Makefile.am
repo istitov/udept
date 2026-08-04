@@ -18,6 +18,8 @@ EXTRA_DIST = \
 	tests/unit/format_atom_for_emerge.bats \
 	tests/unit/format_depatom.bats \
 	tests/unit/format_revdep.bats \
+	tests/unit/format_taint.bats \
+	tests/unit/print_depstring.bats \
 	tests/unit/required_use.bats \
 	tests/unit/required_use_action.bats \
 	tests/unit/resolve_depatom.bats \

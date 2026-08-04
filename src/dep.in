@@ -936,7 +936,7 @@ function format_taint() {
 	local cpv="$1" tok
 	local -a taint_tokens=() active_use=()
 	read -r -a taint_tokens <<<"${*:2}"
-	read -r -a active_use <<<"$(dbuse "$cpv")"
+	mapfile -t active_use < <(dbuse "$cpv")
 	for tok in "${taint_tokens[@]}"; do
 		if [[ $tok != *\? ]]; then
 			printf '%s ' "${Gr}$tok${NO}"
@@ -3277,8 +3277,15 @@ function print_depstring() {
 	local name=$1; local cpv="$2"
 	local indent="    "; local taint=""; local or=""
 	echo ${BL}$name${NO}:
-	extract_var $name $cpv \
-	| sed 's/(/( /g;s/)/ )/g;s/[[:space:]]\+/\n/g' \
+	extract_var "$name" "$cpv" \
+	| sed '
+		# Preserve the +/- default marker while tokenizing brackets.
+		s/(+)/__UDEPT_USE_DEFAULT_ON__/g
+		s/(-)/__UDEPT_USE_DEFAULT_OFF__/g
+		s/(/ ( /g;s/)/ ) /g;s/[[:space:]]\+/\n/g
+		s/__UDEPT_USE_DEFAULT_ON__/(+)/g
+		s/__UDEPT_USE_DEFAULT_OFF__/(-)/g
+	' \
 	| while read tok; do case "$tok" in
 		""  ) continue;;
 		\)  ) indent="${indent#    }"; echo "$indent$tok";;
