@@ -1354,13 +1354,8 @@ function atom_use_satisfies() {
 			fi
 		fi
 		if [[ -z "$candidate_loaded" ]]; then
-			if [[ -d "$VARDB_DIR/$candidate" ]]; then
-				candidate_use=$(extract_var_from_vardb USE "$candidate")
-				iuse=$(extract_var_from_vardb IUSE "$candidate" | strip_iuse_prefixes)
-			else
-				candidate_use=$(dbuse "$candidate")
-				iuse=$(extract_var IUSE "$candidate" 2>/dev/null | strip_iuse_prefixes)
-			fi
+			candidate_use=$(candidate_use "$candidate")
+			iuse=$(candidate_iuse "$candidate")
 			candidate_loaded=yes
 		fi
 		if has "$flag" $iuse; then
@@ -1624,6 +1619,26 @@ function keywords_for() {
 function slot_for() {
 	extract_var SLOT "$1" "${2-}"
 }
+# candidate_iuse: emit normalized IUSE for cpv $1 from vardb or metadata cache.
+function candidate_iuse() {
+	local cpv=$1
+	if [[ -d "$VARDB_DIR/$cpv" ]]; then
+		extract_var_from_vardb IUSE "$cpv"
+	else
+		extract_var IUSE "$cpv" 2>/dev/null
+	fi | strip_iuse_prefixes
+}
+
+# candidate_use: emit effective USE for cpv $1 from vardb or metadata cache.
+function candidate_use() {
+	local cpv=$1
+	if [[ -d "$VARDB_DIR/$cpv" ]]; then
+		extract_var_from_vardb USE "$cpv"
+	else
+		dbuse "$cpv"
+	fi
+}
+
 
 # pkginternal_use_for: echo per-line IUSE defaults for cpv $1: '+flag' -> flag, '-flag' -> -flag; strip plain entries.
 function pkginternal_use_for() {
@@ -1898,6 +1913,8 @@ memoise package_use_force
 memoise repo_usecomponent
 memoise slot_for
 memoise repo_for_cpv
+memoise candidate_iuse
+memoise candidate_use
 
 # user_package_usecomponent: emit matching /etc/portage/package.use changes.
 function user_package_usecomponent() {

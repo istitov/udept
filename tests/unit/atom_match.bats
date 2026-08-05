@@ -109,6 +109,25 @@ setup() {
 	assert [ ! -e "$queried" ]
 }
 
+@test "candidate metadata is cached across atom checks for the same candidate" {
+	local calls="${BATS_TEST_TMPDIR}/candidate-calls"
+	: >"$calls"
+
+	extract_var_from_vardb() {
+		printf "%s\n" "$1" >>"$calls"
+		case "$1" in
+			IUSE) cat "${VARDB_DIR}/cat/pkg-2.0/IUSE" ;;
+			USE) cat "${VARDB_DIR}/cat/pkg-2.0/USE" ;;
+		esac
+	}
+
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[foo]'
+	assert_success
+	run dep_satisfies_atom cat/pkg-2.0 'cat/pkg[bar]'
+	assert_failure
+	assert_equal "$(wc -l < "$calls")" 2
+}
+
 @test "multilib conditional USE group remains matchable" {
 	local abi_flags='abi_mips_n32 abi_mips_n64 abi_mips_o32 abi_s390_32 abi_s390_64 abi_x86_32 abi_x86_64 abi_x86_x32'
 	printf '%s\n' "$abi_flags" >"$VARDB_DIR/cat/pkg-2.0/IUSE"
