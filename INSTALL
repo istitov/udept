@@ -23,9 +23,9 @@ Standard autoconf options (--prefix, --bindir, etc.) apply unchanged.
 
 Tests:
 
-  make check                 286 isolated Bats unit tests
+  make check                 348 isolated Bats unit tests
   make check-properties      11 configuration-transform invariants
-  make check-smoke           43 read-only tests against a real Portage tree
+  make check-smoke           47 read-only tests against a real Portage tree
   make check-oracle          Bash atom matcher vs Python Portage
   make check-dist-inventory  source/archive test-inventory equality
   make distcheck             isolated archive build/install/uninstall check

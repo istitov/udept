@@ -18,6 +18,46 @@
 	  repositories and their masters, package rules, IUSE defaults, FEATURES,
 	  and environment overrides. Multi-flag records are normalized before
 	  stacking so removals and later overrides remain effective.
+	* fix: read the whole profile stack, in Portage's order. The parent walk
+	  kept its cursor in a global, so every parent after the first resolved
+	  against the wrong directory and was dropped — half the stack of a stock
+	  desktop profile went unread. The surviving nodes were then ranked by
+	  walk order rather than by precedence, which inverts multi-parent
+	  profiles: base/ outranked arch/amd64 and targets/desktop ranked last.
+	  Both are fixed, and the stack now matches Portage node for node.
+	* fix: apply use.mask after use.force and after ARCH, and stack both one
+	  profile node at a time rather than one file class at a time. Grouping by
+	  class let an earlier node's package.use.stable.mask beat a later node's
+	  package.use.mask unmask, which is the reverse of what UseManager does.
+	* fix: decide use.stable.mask / use.stable.force applicability from
+	  keyword visibility instead of from the presence of the stable arch
+	  keyword. A host that accepts ~arch has no stable packages in that sense,
+	  so the .stable files must not apply there at all.
+	* fix: reconstruct make.conf's USE contribution instead of replaying
+	  portageq's resolved answer. The resolved set carries no negations, so it
+	  could never turn a flag off, and replaying it at conf priority also
+	  overrode the per-package rules that are supposed to win. Flags the
+	  profile's own make.defaults explain are now left to the profile.
+	* fix: treat each USE_EXPAND variable as the complete set for its prefix.
+	  The values were appended after the stacking sort, so they could only add
+	  flags, and a lower-priority profile rule survived a higher-priority
+	  variable that Portage honours.
+	* fix: judge a package.use flag redundant against what that package would
+	  resolve to without its own entry, not against the global USE set. The
+	  global comparison ignored per-package profile rules, IUSE defaults and
+	  masks, so -E offered to delete flags that were doing work.
+	* fix: read /etc/portage rule directories in sorted order. Within such a
+	  directory the later file wins, so raw readdir order left that precedence
+	  up to the filesystem.
+	* fix: read every active USE component from the candidate's real state —
+	  format_taint consumed only the first line of dbuse's output, so every
+	  USE conditional but one rendered as inactive in coloured output.
+	* fix: preserve USE-dependency defaults when tokenizing dependency strings
+	  for -S, so atoms carrying (+) or (-) no longer shatter into fragments.
+	* perf: cache the profile and repository files the USE walk reads, memoise
+	  the per-candidate metadata lookups, and skip package rules that cannot
+	  name the candidate before parsing them. Effective-USE resolution is back
+	  to the 0.7.5 cost with the corrections above in place.
 	* fix: reject invalid EROOT, EPREFIX, and PORTAGE_CONFIGROOT values before
 	  dispatch. A standalone explicit EPREFIX now obtains its matching EROOT
 	  from Portage instead of combining Prefix configuration with host paths.
