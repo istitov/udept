@@ -1,8 +1,8 @@
 # shellcheck configuration for the udept source tree.
 # https://github.com/koalaman/shellcheck/wiki/Directive
 #
-# CI enforces `shellcheck --severity=error src/dep` — so warnings
-# and below do not block builds. This file lowers the noise floor
+# CI enforces `shellcheck --severity=warning src/dep` — so info and
+# style findings do not block builds. This file lowers the noise floor
 # for developers running plain `shellcheck src/dep` locally.
 #
 # Inline `# shellcheck disable=...` directives in src/dep.in cover

@@ -168,13 +168,23 @@ cover all visible ebuilds and active USE_ORDER components; explicit EROOT,
 EPREFIX, and PORTAGE_CONFIGROOT values are authoritative; and CONTENTS
 paths containing whitespace are parsed as fields rather than shell words.
 
+Effective USE now follows Portage's own resolution — the whole profile
+parent stack in precedence order, `use.mask` after `use.force` and ARCH
+and stacked per profile node, the `.stable` files gated on keyword
+visibility, make.conf's contribution separated from the profile's, and
+each USE_EXPAND variable treated as a complete set — and matches Python
+Portage flag for flag over a 530-package sample of an installed set.
+`-E` correspondingly judges a `package.use` flag against what its package
+would resolve to without that entry, so flags that are doing work are no
+longer offered for removal.
+
 Mutating actions are now dry-run by default. Use `--ask` for an interactive
 apply or the new long-only `--force` for a non-interactive apply. File
 replacement is same-directory and atomic, preserves metadata and valid
 in-root symlinks, and rejects dangling or out-of-root symlinks. A Python
 Portage differential suite is test-only: the Bash runtime remains
 self-contained, while CI checks hundreds of real atom/candidate decisions
-against Portage itself.
+against Portage itself. AI-assist disclosure as for 0.7.1.
 
 ## Other known repositories
 
