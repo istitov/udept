@@ -214,8 +214,49 @@ EOF
 	run profile_stack_read "$child" first second
 	[ "$status" -eq 0 ]
 	[[ "${#lines[@]}" -eq 2 ]]
-	[[ "${lines[0]}" == "$child/first" ]]
-	[[ "${lines[1]}" == "$child/second" ]]
+	# Both entries resolve under $child; the order is asserted separately.
+	[[ " ${lines[*]} " == *" $child/first "* ]]
+	[[ " ${lines[*]} " == *" $child/second "* ]]
+}
+
+@test "profile_stack_read: a later parent entry outranks an earlier one" {
+	# Portage flattens each parent's subtree before the node, so its
+	# low-to-high list is flatten(p1) … flatten(pn) node. Reversed for
+	# stacking_sort, that makes the LAST parent listed the highest priority
+	# after the node itself.
+	local root="$BATS_TEST_TMPDIR/root"
+	mkdir -p "$root/node" "$root/base" "$root/arch"
+	printf '%s\n' '../base' '../arch' >"$root/node/parent"
+
+	run profile_stack_read "$root" node
+	[ "$status" -eq 0 ]
+	[[ "${#lines[@]}" -eq 3 ]]
+	[[ "${lines[0]}" == "$root/node" ]]
+	[[ "${lines[1]}" == "$root/arch" ]]
+	[[ "${lines[2]}" == "$root/base" ]]
+}
+
+@test "package_is_stable: nothing is stable when ACCEPT_KEYWORDS takes ~arch" {
+	# KeywordsManager.isStable: the package must be visible now and stop being
+	# visible once every keyword becomes its ~ variant. Accepting ~arch means
+	# the second half never holds, so use.stable.mask/force do not apply.
+	keywords_for() { read -r -a "$3" <<<"amd64 ~x86"; }
+	accept_for() { read -r -a "$3" <<<"$ACCEPT_KW"; }
+
+	# package_is_stable is memoised on the cpv alone (ACCEPT_KEYWORDS cannot
+	# change mid-run in production), so vary the cpv per case.
+	ACCEPT_KW="amd64 ~amd64"
+	run package_is_stable cat/pkg-1.0
+	assert_failure
+
+	ACCEPT_KW="amd64"
+	run package_is_stable cat/pkg-2.0
+	assert_success
+
+	# Not visible at all is not stable either.
+	ACCEPT_KW="ppc"
+	run package_is_stable cat/pkg-3.0
+	assert_failure
 }
 
 @test "usecomponent defaults: stable rules follow Portage precedence" {
@@ -336,4 +377,161 @@ EOF
 	# that the unknown branch produces no spurious stdout.
 	run usecomponent definitely-not-a-real-component ''
 	[[ -z "$output" ]] || [[ "$output" != *foo* ]]
+}
+
+# --- conf, USE_EXPAND and the mask/force stack ----------------------------
+
+@test "usecomponent conf: negates profile defaults the resolved USE dropped" {
+	# portageq hands back a resolved global USE with no negations in it, so
+	# make.conf's `-gtk` is invisible as such: all we see is that the profile
+	# sets gtk and Portage's answer does not carry it.
+	local profile="$BATS_TEST_TMPDIR/profile"
+	mkdir -p "$profile"
+	printf '%s\n' 'USE="gtk tiff sound"' >"$profile/make.defaults"
+	profile_stack=$profile
+	__conf_USE="tiff sound zstd"
+
+	run conf_usecomponent
+	[ "$status" -eq 0 ]
+	local flat=" ${lines[*]} "
+	# gtk was set by the profile and is missing from the resolved set: turned
+	# off above the profile, so it belongs here as a negation.
+	[[ "$flat" == *" -gtk "* ]]
+	# zstd is in the resolved set and unexplained by the profile: make.conf.
+	[[ "$flat" == *" zstd "* ]]
+	# tiff and sound are explained by the profile and survived, so this
+	# component must stay silent about them — otherwise they would outrank the
+	# per-package rules in "defaults" that are meant to override them.
+	[[ "$flat" != *" tiff "* ]]
+	[[ "$flat" != *" sound "* ]]
+}
+
+@test "use_expand_usecomponent: a USE_EXPAND variable is a complete set" {
+	USE_EXPAND="ABI_X86 PYTHON_TARGETS"
+	ABI_X86="64"
+	PYTHON_TARGETS="python3_13"
+	use_expand_index
+	candidate_iuse() { printf '%s\n' 'abi_x86_32 abi_x86_64 python3_13 python_targets_python3_13 python_targets_python3_14 static'; }
+
+	run use_expand_usecomponent cat/pkg-1
+	[ "$status" -eq 0 ]
+	local flat=" ${lines[*]} "
+	[[ "$flat" == *" abi_x86_64 "* ]]
+	[[ "$flat" == *" python_targets_python3_13 "* ]]
+	# Declared by the package, not carried by the variable: off.
+	[[ "$flat" == *" -abi_x86_32 "* ]]
+	[[ "$flat" == *" -python_targets_python3_14 "* ]]
+	# Flags outside every USE_EXPAND prefix are none of this component's
+	# business, and neither is a bare value that only looks like one.
+	[[ "$flat" != *" -static "* ]]
+	[[ "$flat" != *" -python3_13 "* ]]
+}
+
+@test "dbuse: use.mask outranks use.force and ARCH" {
+	local profile="$BATS_TEST_TMPDIR/profile"
+	mkdir -p "$profile"
+	profile_stack=$profile
+	USE_ORDER='features'
+	ARCH=amd64
+	USE_EXPAND=
+	use_expand_index
+	# config.py adds ARCH, unions in use.force and subtracts use.mask last.
+	package_use_mask() { printf '%s\n' gpm amd64; }
+	package_use_force() { printf '%s\n' gpm; }
+
+	run dbuse cat/pkg-1
+	[ "$status" -eq 0 ]
+	local flat=" ${lines[*]} "
+	[[ "$flat" != *" gpm "* ]]
+	[[ "$flat" != *" amd64 "* ]]
+}
+
+@test "package_use_mask: a later node's unmask beats an earlier node's stable mask" {
+	# UseManager.getUseMask walks one profile node at a time, so node order
+	# outranks file class: arch/amd64/package.use.mask's `-llvm_targets_AMDGPU`
+	# beats arch/base/package.use.stable.mask's mask of the same flag.
+	local high="$BATS_TEST_TMPDIR/high" low="$BATS_TEST_TMPDIR/low"
+	mkdir -p "$high" "$low"
+	printf '%s\n' 'cat/pkg -masked-flag' >"$high/package.use.mask"
+	printf '%s\n' 'cat/pkg masked-flag' >"$low/package.use.stable.mask"
+	profile_stack=$(printf '%s\n%s\n' "$high" "$low")
+	package_is_stable() { return 0; }
+	best_tree() { return 1; }
+	config_cache_reset
+
+	run package_use_mask cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ " ${lines[*]} " != *" masked-flag "* ]]
+}
+
+@test "dbuse: the baseline resolution ignores /etc/portage/package.use" {
+	# What a package.use flag has to differ from to be doing any work.
+	printf '%s\n' 'cat/pkg user-flag' >"$ETC_PORTAGE_DIR/package.use"
+	local profile="$BATS_TEST_TMPDIR/profile"
+	mkdir -p "$profile"
+	profile_stack=$profile
+	USE_ORDER='pkg'
+	ARCH=
+	USE_EXPAND=
+	use_expand_index
+	config_cache_reset
+	package_use_mask() { :; }
+	package_use_force() { :; }
+	best_tree() { return 1; }
+
+	run dbuse cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ " ${lines[*]} " == *" user-flag "* ]]
+
+	run dbuse cat/pkg-1 baseline
+	[ "$status" -eq 0 ]
+	[[ " ${lines[*]} " != *" user-flag "* ]]
+}
+
+@test "dbuse: --original-depends does not answer a baseline request" {
+	# The vardb record is what the package was merged with, so it already
+	# carries whatever /etc/portage/package.use asked for. Serving it as the
+	# baseline made every package.use flag look redundant under -E -o.
+	printf '%s\n' 'cat/pkg user-flag' >"$ETC_PORTAGE_DIR/package.use"
+	VARDB_DIR="$BATS_TEST_TMPDIR/vardb"
+	mkdir -p "$VARDB_DIR/cat/pkg-1"
+	printf '%s\n' 'user-flag merged-flag' >"$VARDB_DIR/cat/pkg-1/USE"
+	opt_arg_original_depends=yes
+	local profile="$BATS_TEST_TMPDIR/profile"
+	mkdir -p "$profile"
+	profile_stack=$profile
+	USE_ORDER='pkg'
+	ARCH=
+	USE_EXPAND=
+	use_expand_index
+	config_cache_reset
+	package_use_mask() { :; }
+	package_use_force() { :; }
+	best_tree() { return 1; }
+
+	# The ordinary resolution still short-circuits to the merged-with record.
+	run dbuse cat/pkg-1
+	[ "$status" -eq 0 ]
+	[[ " ${lines[*]} " == *" merged-flag "* ]]
+
+	# The baseline is computed regardless, so the entry's own flag is absent.
+	run dbuse cat/pkg-1 baseline
+	[ "$status" -eq 0 ]
+	[[ " ${lines[*]} " != *" user-flag "* ]]
+	[[ " ${lines[*]} " != *" merged-flag "* ]]
+}
+
+@test "package_use_filter: a flag only the package's own rules would lack is kept" {
+	# Comparing against the global USE set instead of the package's own
+	# baseline made -E delete flags that were doing work.
+	dbuse() {
+		case "${2-}" in
+			baseline) return 0 ;;        # off without the package.use entry
+			*) printf '%s\n' needed-flag ;;
+		esac
+	}
+
+	run package_use_filter cat/pkg cat/pkg 1.0 needed-flag
+	[ "$status" -eq 0 ]
+	[[ "$output" != *"flag redundant"* ]]
 }

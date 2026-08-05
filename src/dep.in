@@ -1060,10 +1060,33 @@ for ((i=0;i<${#deplines[@]};++i)); do declare depline_${deplines[$i]}=$i; done
 # ============================================================================
 
 # profile_stack_read: recursively walk profile parent links from $1+$@, emit each profile dir; supports repo:path refs.
+#
+# Emission order is highest-precedence-first, because that is what
+# stacking_sort consumes (it keeps the first entry seen for a key).
+#
+# Portage flattens a node's parents depth-first *before* the node itself
+# (config.py's _getProfiles / profile stack), so its low-to-high list is
+#
+#	flatten(parent_1) … flatten(parent_n) node
+#
+# and the precedence order is the reverse of that:
+#
+#	node  reverse(flatten(parent_n))  …  reverse(flatten(parent_1))
+#
+# — i.e. a *later* entry in a multi-parent `parent` file outranks an earlier
+# one.  Walking "$@" forwards inverts that: on the stock desktop profile it
+# ranked base/ 5th of 12 where Portage ranks it last, and targets/desktop last
+# where Portage ranks it 3rd.  Both inversions were observable — base/'s
+# `sys-libs/ncurses stack-realign` mask beat arch/amd64's `-stack-realign`
+# unmask, and its `multilib` use.mask beat features/multilib's `-multilib`.
+# So iterate the parents in reverse, exactly as _repository_chain_walk does
+# for repository masters.
 function profile_stack_read() {
-	local dir="$1" rel pdir repo subpath
+	local dir="$1" rel pdir repo subpath i
 	shift
-	for rel in "$@"; do
+	local -a rels=("$@")
+	for ((i=${#rels[@]}-1; i>=0; --i)); do
+		rel=${rels[i]}
 		case "$rel" in
 		*:*)	repo="${rel%%:*}"; subpath="${rel#*:}"
 			[[ "${repo_loc[$repo]:-}" ]] || continue
@@ -1095,7 +1118,13 @@ function profile_files() {
 function etc_portage_files() {
 	name="$1"
 	if [[ -d "$ETC_PORTAGE_DIR/$name" ]]; then
-		find "$ETC_PORTAGE_DIR/$name" -type f -readable
+		# Sorted, like config_path_files and like Portage's own recursive
+		# grabfile: within a directory of rules the later file wins, so raw
+		# readdir order makes that precedence depend on the filesystem. It
+		# decided whether /etc/portage/package.use/my.use's
+		# `media-libs/opencv … -python` or zz-vllm-rocm-session's
+		# `media-libs/opencv python` took effect.
+		find "$ETC_PORTAGE_DIR/$name" -type f -readable | LC_ALL=C sort
 	elif [[ -r "$ETC_PORTAGE_DIR/$name" ]]; then
 		echo "$ETC_PORTAGE_DIR/$name"
 	fi
@@ -1162,6 +1191,28 @@ function read_repos_config() {
 	)
 }
 
+# use_expand_index: (re)build the USE_EXPAND lookup tables from $USE_EXPAND and
+# the expanded variables themselves. __use_expand_flags holds every resolved
+# '<lower>_<value>' flag; __use_expand_prefixes holds the lowercased variable
+# names, so an arbitrary flag can be traced back to the group it belongs to.
+#
+# Declared here with `declare -gA`, the same way read_repos_config declares
+# repo_loc: the tests and the completion build source this script from inside a
+# function, where a top-level `declare -A` would land in that function's scope
+# and later assignments would silently create an indexed array instead.
+function use_expand_index() {
+	local var lower value
+	declare -gA __use_expand_flags=() __use_expand_prefixes=()
+	for var in $USE_EXPAND; do
+		lower=$(lower "$var")
+		[[ "$lower" ]] || continue
+		__use_expand_prefixes[$lower]=1
+		for value in ${!var-}; do
+			__use_expand_flags[${lower}_$value]=1
+		done
+	done
+}
+
 # load_portage_config: delegate to portageq envvar for make.conf vars; populate USE_EXPAND, profile categories/provided/masks.
 function load_portage_config() {
 	# Portage's own resolution of make.conf / make.globals / profile
@@ -1176,6 +1227,12 @@ function load_portage_config() {
 	# `<repo>:<path>` parent entries can be resolved.
 	[[ -h "$ETC_PORTAGE_DIR/make.profile" ]] && profile_stack="$(profile_stack_read "$ETC_PORTAGE_DIR/profile" .
 		profile_stack_read "$ETC_PORTAGE_DIR/make.profile" .)"
+	# Whatever the caller's environment actually exported, captured before the
+	# eval below overwrites $USE with Portage's resolved answer. usecomponent's
+	# "env" component is the top of USE_ORDER; feeding it the resolved set put
+	# every globally-enabled flag above /etc/portage/package.use and above the
+	# profile's own per-package rules.
+	__env_USE="${USE-}"
 	# Round 1: the static set of vars we always want plus USE_EXPAND, which
 	# we need read first so we can ask for its expansions in round 2.
 	eval "$(portageq envvar -v \
@@ -1187,7 +1244,11 @@ function load_portage_config() {
 	if [[ "$USE_EXPAND" ]]; then
 		eval "$(portageq envvar -v $USE_EXPAND 2>/dev/null)"
 	fi
+	use_expand_index
 	read -a ACCEPT_KEYWORDS <<<"$ARCH $ACCEPT_KEYWORDS"
+	# After ACCEPT_KEYWORDS is an array: config_cache_warm consults it to
+	# decide whether the .stable profile files are worth reading at all.
+	config_cache_warm
 	categories=$(sort -u $(profile_files_extra categories))
 
 	allprofilepackages=$(
@@ -1619,14 +1680,20 @@ function keywords_for() {
 function slot_for() {
 	extract_var SLOT "$1" "${2-}"
 }
-# candidate_iuse: emit normalized IUSE for cpv $1 from vardb or metadata cache.
-function candidate_iuse() {
+# candidate_iuse_raw: emit IUSE for cpv $1 from vardb or metadata cache, with
+# the +/- default markers intact.
+function candidate_iuse_raw() {
 	local cpv=$1
 	if [[ -d "$VARDB_DIR/$cpv" ]]; then
 		extract_var_from_vardb IUSE "$cpv"
 	else
 		extract_var IUSE "$cpv" 2>/dev/null
-	fi | strip_iuse_prefixes
+	fi
+}
+
+# candidate_iuse: emit normalized IUSE for cpv $1 from vardb or metadata cache.
+function candidate_iuse() {
+	candidate_iuse_raw "$1" | strip_iuse_prefixes
 }
 
 # candidate_use: emit effective USE for cpv $1 from vardb or metadata cache.
@@ -1638,7 +1705,6 @@ function candidate_use() {
 		dbuse "$cpv"
 	fi
 }
-
 
 # pkginternal_use_for: echo per-line IUSE defaults for cpv $1: '+flag' -> flag, '-flag' -> -flag; strip plain entries.
 function pkginternal_use_for() {
@@ -1734,22 +1800,79 @@ function autouse() {
 }
 memoise autouse
 
-# package_use_mask: echo merged use.mask for $1: profile package.use.mask matches stacked with unstacked use.mask.
+# package_use_mask: echo the effective use.mask set for cpv $1.
 function package_use_mask() {
-	(
-		kill_comments_and_blanks $(profile_files use.mask)
-		if package_is_stable "$1"; then
-			kill_comments_and_blanks $(profile_files use.stable.mask)
-			package_use_rules package.use.stable.mask "$1"
-		fi
-		package_use_rules package.use.mask "$1"
-	) | sed 's/[[:space:]]\+/\n/g' | stacking_sort yes
+	{
+		profile_use_restriction mask "$1"
+		repo_use_restriction mask "$1"
+	} | stacking_sort yes
 }
 
+# _keywords_accepted: 0 when the space-separated KEYWORDS list $1 is visible
+# under the space-separated ACCEPT_KEYWORDS list $2. Same acceptance rules as
+# is_keyword_masked, factored out so the stability test can apply them to a
+# synthetic keyword list. Keywords never contain whitespace, so splitting the
+# two lists on it is safe.
+function _keywords_accepted() {
+	local keyword
+	local -a kw=() acc=()
+	read -r -a kw <<<"$1"
+	read -r -a acc <<<"$2"
+	has '*' "${kw[@]}" && return 0
+	if has '*' "${acc[@]}"; then
+		for keyword in "${kw[@]}"; do
+			[[ "$keyword" != [~-]* ]] && return 0
+		done
+	fi
+	if has '~*' "${acc[@]}"; then
+		for keyword in "${kw[@]}"; do
+			[[ "$keyword" == \~* ]] && return 0
+		done
+	fi
+	for keyword in "${kw[@]}"; do
+		has "$keyword" "${acc[@]}" && return 0
+	done
+	return 1
+}
+
+# package_is_stable: 0 when use.stable.mask / use.stable.force apply to cpv $1.
+#
+# This is not "does the ebuild carry the plain arch keyword". Portage's
+# KeywordsManager.isStable asks whether the package is visible *and* would stop
+# being visible if every one of its keywords were replaced by the ~ variant —
+# the comment there spells out why: the effective use.force/mask settings for
+# an ebuild must not change when it is stabilised. On a host whose
+# ACCEPT_KEYWORDS carries ~arch nothing is stable in that sense, so the .stable
+# files never apply.
+#
+# Testing only for the plain arch keyword made udept read them anyway. On a
+# ~amd64 host that applied arch/amd64/package.use.stable.mask's
+# `llvm-runtimes/clang-runtime llvm_targets_AMDGPU llvm_targets_NVPTX
+# llvm_targets_SPIRV` and arch/base's `dev-ruby/date ruby_targets_*`, neither
+# of which Portage applies there. Confirmed by flipping ACCEPT_KEYWORDS to a
+# bare "amd64" in a scratch PORTAGE_CONFIGROOT: Portage then masks them too.
 function package_is_stable() {
-	local -a package_keywords=()
-	keywords_for "$1" "" package_keywords 2>/dev/null
-	has "$ARCH" "${package_keywords[@]}"
+	local cpv=$1 keyword cp mlsr unstable=
+	local -a package_keywords=() accept=()
+	keywords_for "$cpv" "" package_keywords 2>/dev/null
+	(( ${#package_keywords[@]} )) || return 1
+	cp=${cpv/%-$VER_SHPAT}
+	mlsr=${cpv#"$cp"-}
+	# accept_for evaluates package.accept_keywords atoms, and an atom carrying
+	# a USE dependency routes back through dbuse -> package_use_mask -> here.
+	# Fall back to the global list on re-entry instead of recursing.
+	if [[ "${__in_package_is_stable:-}" ]]; then
+		accept=("${ACCEPT_KEYWORDS[@]}")
+	else
+		local __in_package_is_stable=1
+		accept_for "$cp" "$mlsr" accept 2>/dev/null
+	fi
+	_keywords_accepted "${package_keywords[*]}" "${accept[*]}" || return 1
+	for keyword in "${package_keywords[@]}"; do
+		[[ "$keyword" == \~* ]] || keyword="~$keyword"
+		unstable+="$keyword "
+	done
+	! _keywords_accepted "$unstable" "${accept[*]}"
 }
 
 # config_path_files: emit the readable file(s) at directory $1 under name $2.
@@ -1767,58 +1890,210 @@ function split_use_tokens() {
 	sed 's/[[:space:]]\+/\n/g' | sed '/^[[:space:]]*$/d'
 }
 
+# --- profile-file content cache ---------------------------------------------
+#
+# The mask, force and defaults walks re-read the same dozen profile files once
+# per candidate package, and a full reverse-dependency query has thousands of
+# candidates. The obvious fix is memoise(), but every one of these reads
+# happens inside dbuse's subshell, so a lazily-filled cache would be discarded
+# with the subshell and re-taken for the next candidate — and memoise()'s own
+# file cache still costs a subshell plus a cat per lookup.
+#
+# So keep the content in shell variables and fill them once, in the parent,
+# before any per-package work starts (config_cache_warm, called from
+# load_portage_config). Subshells inherit the filled arrays; lookups after that
+# are builtins only.
+
+# config_cache_reset: (re)create the caches. `declare -g` for the same reason
+# use_expand_index needs it — the tests source this script inside a function.
+function config_cache_reset() {
+	declare -gA __config_content=() __use_tokens_cache=() __make_defaults_cache=()
+	declare -g __config_cache_ready=1
+}
+
+# config_file_load: ensure $1/$2 is cached. Callers read __config_content
+# directly so that an absent file costs nothing at all.
+function config_file_load() {
+	local path=$1 name=$2 key=$1/$2 file
+	[[ "${__config_cache_ready:-}" ]] || config_cache_reset
+	[[ -n "${__config_content[$key]+set}" ]] && return 0
+	__config_content[$key]=
+	# Most (node, name) pairs do not exist. Test for that before spending a
+	# process substitution on config_path_files, so an absent file costs two
+	# builtins and no fork at all.
+	if [[ -d "$path/$name" ]]; then
+		local -a config_files=()
+		while IFS= read -r file; do
+			[[ "$file" ]] && config_files+=("$file")
+		done < <(config_path_files "$path" "$name")
+		(( ${#config_files[@]} )) \
+			&& __config_content[$key]=$(kill_comments_and_blanks "${config_files[@]}")
+	elif [[ -r "$path/$name" ]]; then
+		__config_content[$key]=$(kill_comments_and_blanks "$path/$name")
+	fi
+	return 0
+}
+
+# config_file_content: comment- and blank-stripped contents of $1/$2.
+function config_file_content() {
+	config_file_load "$1" "$2"
+	[[ "${__config_content[$1/$2]}" ]] || return 0
+	printf '%s\n' "${__config_content[$1/$2]}"
+}
+
 # use_tokens_at: emit global USE changes from file/directory $1/$2.
 function use_tokens_at() {
-	local path=$1 name=$2 file
-	local use_files=()
-	while IFS= read -r file; do
-		[[ "$file" ]] && use_files+=("$file")
-	done < <(config_path_files "$path" "$name")
-	(( ${#use_files[@]} )) || return 0
-	kill_comments_and_blanks "${use_files[@]}" | split_use_tokens | tac
+	local key=$1/$2
+	config_file_load "$1" "$2"
+	if [[ -z "${__use_tokens_cache[$key]+set}" ]]; then
+		__use_tokens_cache[$key]=
+		[[ "${__config_content[$key]}" ]] && __use_tokens_cache[$key]=$(
+			printf '%s\n' "${__config_content[$key]}" | split_use_tokens | tac)
+	fi
+	[[ "${__use_tokens_cache[$key]}" ]] || return 0
+	printf '%s\n' "${__use_tokens_cache[$key]}"
+}
+
+# config_cache_warm: pre-read every profile and repository file the USE
+# resolution walks. Bounded work — a dozen profile nodes plus the configured
+# repositories, once per run.
+function config_cache_warm() {
+	local path repo name
+	local -a paths=()
+	local -a token_names=(use.mask use.force use.stable)
+	local -a rule_names=(package.use.mask package.use.force package.use)
+	# The .stable variants only matter when the host does not accept ~arch —
+	# see package_is_stable. Warming is an optimisation, never a correctness
+	# requirement, so skipping them is safe either way.
+	if ! has "~$ARCH" "${ACCEPT_KEYWORDS[@]}"; then
+		token_names+=(use.stable.mask use.stable.force)
+		rule_names+=(package.use.stable.mask package.use.stable.force package.use.stable)
+	fi
+	config_cache_reset
+	while IFS= read -r path; do
+		[[ "$path" ]] && paths+=("$path")
+	done <<<"$profile_stack"
+	for repo in "${!repo_loc[@]}"; do
+		paths+=("${repo_loc[$repo]}/profiles")
+	done
+	for path in "${paths[@]}"; do
+		for name in "${token_names[@]}"; do use_tokens_at "$path" "$name" >/dev/null; done
+		for name in "${rule_names[@]}"; do config_file_load "$path" "$name"; done
+		make_defaults_use "$path/make.defaults" >/dev/null
+	done
+	return 0
 }
 
 # package_use_rules_at: emit matching package.* USE flags rooted at $1.
 function package_use_rules_at() {
-	local path=$1 name=$2 cpv=$3 tree=${4-} package flags file
-	local rule_files=()
-	while IFS= read -r file; do
-		[[ "$file" ]] && rule_files+=("$file")
-	done < <(config_path_files "$path" "$name")
-	(( ${#rule_files[@]} )) || return 0
+	local path=$1 name=$2 cpv=$3 tree=${4-} package flags matched=
+	local cp=${cpv/%-$VER_SHPAT} pn
+	pn=${cp#*/}
 	while read -r package flags; do
+		# dep_satisfies_atom is the expensive part of this loop and almost
+		# none of these rules can match: base/package.use.mask alone carries
+		# several hundred. Skip the ones whose name component is not this
+		# package's before paying for a parse. Anything with a wildcard in it
+		# still has to go through the matcher.
+		case "$package" in
+			*'*'*) ;;
+			*"/$pn"|*"/$pn"-*|*"/$pn":*|*"/$pn"\[*) ;;
+			*) continue;;
+		esac
 		dep_satisfies_atom "$cpv" "$package" '' '' '' "$tree" \
-			&& printf '%s\n' "$flags"
-	done < <(kill_comments_and_blanks "${rule_files[@]}") \
-		| split_use_tokens | tac
+			&& matched+="$flags"$'\n'
+	done < <(config_file_content "$path" "$name")
+	[[ "$matched" ]] || return 0
+	printf '%s' "$matched" | split_use_tokens | tac
 }
 
-# package_use_rules: emit matching active-profile and package-repository rules.
-# Kept as the combined interface used by mask/force evaluation.
-function package_use_rules() {
-	local name=$1 cpv=$2 path tree
+# use_restriction_at: one profile node's contribution to a use.mask or
+# use.force stack for cpv $3, highest precedence first. $1 is the node, $2 the
+# class stem ("mask" or "force"), $4 the optional repository tree.
+function use_restriction_at() {
+	local path=$1 stem=$2 cpv=$3 tree=${4-} stable=${5-}
+	[[ "$stable" ]] && package_use_rules_at "$path" "package.use.stable.$stem" "$cpv" "$tree"
+	package_use_rules_at "$path" "package.use.$stem" "$cpv" "$tree"
+	[[ "$stable" ]] && use_tokens_at "$path" "use.stable.$stem"
+	use_tokens_at "$path" "use.$stem"
+	return 0
+}
+
+# profile_use_restriction: the profile-stack half of a use.mask/use.force
+# stack, highest precedence first.
+#
+# UseManager.getUseMask / getUseForce assemble their list one profile node at
+# a time — use.<stem>, use.stable.<stem>, package.use.<stem>,
+# package.use.stable.<stem>, then on to the next node — and stack_lists gives
+# later entries the higher priority. So a *later* node's package.use.mask
+# outranks an *earlier* node's package.use.stable.mask.
+#
+# Grouping by file class across the whole stack, which is what this used to
+# do, inverted that: arch/base/package.use.stable.mask's
+# `llvm-runtimes/clang-runtime llvm_targets_AMDGPU` beat
+# arch/amd64/package.use.mask's `-llvm_targets_AMDGPU` unmask, and Portage
+# resolves it the other way round.
+function profile_use_restriction() {
+	local stem=$1 cpv=$2 path stable=
+	package_is_stable "$cpv" && stable=yes
 	while IFS= read -r path; do
-		[[ "$path" ]] && package_use_rules_at "$path" "$name" "$cpv"
+		[[ "$path" ]] || continue
+		use_restriction_at "$path" "$stem" "$cpv" '' "$stable"
 	done <<<"$profile_stack"
-	tree=$(best_tree "$cpv" 2>/dev/null)
-	[[ "$tree" ]] && package_use_rules_at "$tree/profiles" "$name" "$cpv" "$tree"
+	return 0
 }
 
+# repo_use_restriction: the repository half, which sits below the whole
+# profile stack — getUseMask seeds its list with the repository dicts before
+# it walks the profiles, and later entries win.
+function repo_use_restriction() {
+	local stem=$1 cpv=$2 tree repo path stable=
+	tree=$(best_tree "$cpv" 2>/dev/null)
+	[[ "$tree" ]] || return 0
+	package_is_stable "$cpv" && stable=yes
+	repo=$(repo_name_for_tree "$tree")
+	if [[ "$repo" ]]; then
+		# repository_chain emits the repository before its masters, which is
+		# the reverse of Portage's masters-then-repo list — i.e. already
+		# highest first.
+		while IFS= read -r repo; do
+			path=${repo_loc[$repo]:-}
+			[[ "$path" ]] || continue
+			use_restriction_at "$path/profiles" "$stem" "$cpv" "$tree" "$stable"
+		done < <(repository_chain "$repo")
+	else
+		use_restriction_at "$tree/profiles" "$stem" "$cpv" "$tree" "$stable"
+	fi
+	return 0
+}
+
+# package_use_force: echo the effective use.force set for cpv $1.
 function package_use_force() {
-	(
-		if package_is_stable "$1"; then
-			kill_comments_and_blanks $(profile_files use.stable.force)
-			package_use_rules package.use.stable.force "$1"
-		fi
-		kill_comments_and_blanks $(profile_files use.force)
-		package_use_rules package.use.force "$1"
-	) | sed 's/[[:space:]]\+/\n/g' | stacking_sort yes
+	{
+		profile_use_restriction force "$1"
+		repo_use_restriction force "$1"
+	} | stacking_sort yes
 }
 
 # make_defaults_use: conservative parser for incremental USE assignments in
 # profile/repository make.defaults. Quoted values and USE+= are supported;
 # arbitrary shell is deliberately not evaluated.
 function make_defaults_use() {
+	local file=$1
+	[[ "${__config_cache_ready:-}" ]] || config_cache_reset
+	if [[ -n "${__make_defaults_cache[$file]+set}" ]]; then
+		[[ "${__make_defaults_cache[$file]}" ]] || return 0
+		printf '%s\n' "${__make_defaults_cache[$file]}"
+		return 0
+	fi
+	__make_defaults_cache[$file]=
+	[[ -r "$file" ]] && __make_defaults_cache[$file]=$(_make_defaults_use_read "$file")
+	[[ "${__make_defaults_cache[$file]}" ]] || return 0
+	printf '%s\n' "${__make_defaults_cache[$file]}"
+}
+
+# _make_defaults_use_read: the uncached parser behind make_defaults_use.
+function _make_defaults_use_read() {
 	local file=$1
 	[[ -r "$file" ]] || return 0
 	sed -n '
@@ -1855,22 +2130,165 @@ function repository_chain() {
 	_repository_chain_walk "$1"
 }
 
+# profile_global_defaults_use: the profile stack's global make.defaults USE,
+# highest-precedence first. No per-package rules — this is exactly the part of
+# the "defaults" component that portageq's resolved USE has already folded in,
+# and conf_usecomponent needs it to tell make.conf's contribution apart from
+# the profile's.
+function profile_global_defaults_use() {
+	local path
+	while IFS= read -r path; do
+		[[ "$path" ]] || continue
+		make_defaults_use "$path/make.defaults"
+	done <<<"$profile_stack" | stacking_sort yes
+}
+
+# conf_usecomponent: reconstruct make.conf's contribution to USE.
+#
+# `portageq envvar USE` is Portage's *answer*, not make.conf's input: it is the
+# environment, make.conf, the profile's global make.defaults and env.d already
+# stacked together, and being a resolved set it carries no negations at all
+# (306 tokens, none negative, on the host this was written against). Emitting
+# it verbatim was wrong in both directions. It could never cancel anything, so
+# a make.conf `-gtk` lost to targets/desktop's `USE="… gtk …"`; and every flag
+# the *profile* had set was re-emitted at conf priority, above the per-package
+# rules meant to override it, so a profile's own `media-libs/libwebp -tiff`
+# package.use rule lost to that same profile's global `tiff`.
+#
+# Split it instead. A resolved flag the profile's global defaults do not
+# explain can only have come from make.conf or the environment, so it belongs
+# here as a positive. A flag the profile's defaults do set but the resolved USE
+# lacks was turned off somewhere above the profile, so it belongs here as a
+# negation. Anything the profile explains and Portage kept is left to the
+# "defaults" component to contribute at its own priority.
+function conf_usecomponent() {
+	local flag
+	local -A resolved=() profile_default=() named_in_conf=()
+	for flag in $__conf_USE; do resolved[$flag]=1; done
+	while read -r flag; do
+		[[ "$flag" ]] && profile_default[$flag]=1
+	done < <(profile_global_defaults_use)
+	while read -r flag; do
+		[[ "$flag" ]] || continue
+		named_in_conf[${flag#-}]=1
+		# A make.conf negation has to be emitted even when no profile default
+		# explains the flag: `-gtk3` there is what turns off an ebuild's
+		# `IUSE="+gtk3"`, and the pkginternal component sits below conf.
+		[[ "$flag" == -* && -z "${resolved[${flag#-}]:-}" ]] && printf '%s\n' "$flag"
+	done < <(make_conf_use)
+	for flag in "${!resolved[@]}"; do
+		# Explained by the profile and not named by make.conf: leave it to the
+		# "defaults" component so the per-package rules there can override it.
+		[[ "${profile_default[$flag]:-}" && -z "${named_in_conf[$flag]:-}" ]] \
+			&& continue
+		printf '%s\n' "$flag"
+	done
+	for flag in "${!profile_default[@]}"; do
+		[[ "${resolved[$flag]:-}" ]] || printf -- '-%s\n' "$flag"
+	done
+}
+
+# make_conf_use: the USE tokens make.conf names itself.
+#
+# Only ever used to settle attribution. A flag can be set by both make.conf and
+# the profile's make.defaults, and the resolved USE cannot say which — but the
+# difference decides whether a profile package.use rule may override it.
+# `targets/desktop/package.use` carries both `dev-lang/python -bluetooth` and
+# `media-libs/libwebp -tiff`; make.conf names bluetooth and not tiff, and
+# Portage accordingly keeps bluetooth on and turns tiff off.
+#
+# Parsed with the same deliberately non-evaluating reader used for
+# make.defaults, so a make.conf using source directives or variable
+# interpolation is simply not fully understood — and a flag this misses just
+# falls back to being attributed to the profile, which is where it was before.
+function make_conf_use() {
+	local file
+	while IFS= read -r file; do
+		[[ "$file" ]] && _make_defaults_use_read "$file"
+	done < <(etc_portage_files make.conf)
+}
+
+# use_expand_usecomponent: emit the resolved USE_EXPAND flags for cpv $1, plus
+# the negations that make each group a complete set.
+#
+# Portage treats a USE_EXPAND variable as exactly that — the highest-priority
+# level that mentions any '<prefix>_*' flag decides the whole group and the
+# lower levels' values are discarded. Confirmed against config.py by putting
+# `sci-libs/rocFFT amdgpu_targets_gfx908` in package.use: gfx908 turned on and
+# the AMDGPU_TARGETS="gfx1150" value dropped out of the group entirely.
+#
+# The values used to be appended after the stacking sort, outside it, so they
+# could only ever add flags. That let lower-priority sources survive a
+# higher-priority variable — features/multilib's
+# `virtual/libcrypt abi_x86_32 abi_x86_64` beat a make.conf ABI_X86="64" that
+# Portage honours. Emitting them at conf priority with the complementary
+# negations gets both directions right, and still lets env and
+# /etc/portage/package.use claim the group, which is what Portage does.
+#
+# Negations are limited twice over:
+#
+#   * only values the candidate declares in IUSE are negated — those are the
+#     only ones whose state can matter, and enumerating every value of every
+#     USE_EXPAND variable on every call is not worth the cost;
+#   * a group is only claimed when the variable names at least one value the
+#     candidate actually declares. dev-util/hipcc offers `IUSE="+llvm_slot_22"`
+#     and nothing else, so a make.conf LLVM_SLOT="21" has nothing to say about
+#     it and Portage leaves the ebuild's default alone; media-libs/mesa does
+#     carry llvm_slot_21, so there the variable decides and llvm_slot_22 loses.
+function use_expand_usecomponent() {
+	local cpv=${1-} flag rest iuse pfx
+	local -A claimed=() pending=()
+	(( ${#__use_expand_flags[@]} )) && printf '%s\n' "${!__use_expand_flags[@]}"
+	[[ "$cpv" ]] || return 0
+	# vardb IUSE is one space-separated line, metadata-cache IUSE can be
+	# either; leave $iuse unquoted and let word splitting cover both, the
+	# same way atom_use_satisfies consumes it.
+	iuse=$(candidate_iuse "$cpv")
+	for flag in $iuse; do
+		[[ "$flag" ]] || continue
+		pfx=''
+		rest=$flag
+		while [[ "$rest" == *_* ]]; do
+			rest=${rest%_*}
+			[[ "${__use_expand_prefixes[$rest]:-}" ]] && { pfx=$rest; break; }
+		done
+		[[ "$pfx" ]] || continue
+		if [[ "${__use_expand_flags[$flag]:-}" ]]; then
+			claimed[$pfx]=1
+		else
+			pending[$pfx]+="$flag "
+		fi
+	done
+	for pfx in "${!pending[@]}"; do
+		[[ "${claimed[$pfx]:-}" ]] || continue
+		for flag in ${pending[$pfx]}; do printf -- '-%s\n' "$flag"; done
+	done
+}
+
 # profile_defaults_usecomponent: mirror config.py's "defaults" USE source.
 function profile_defaults_usecomponent() {
 	local cpv=$1 path
-	[[ "$cpv" ]] || return 0
 	while IFS= read -r path; do
 		[[ "$path" ]] || continue
 		# package/flag-specific settings have higher priority than the
 		# profile's global defaults. The profile stack itself is already
 		# ordered child before parent (highest precedence first).
-		if package_is_stable "$cpv"; then
-			package_use_rules_at "$path" package.use.stable "$cpv"
+		if [[ "$cpv" ]]; then
+			if package_is_stable "$cpv"; then
+				package_use_rules_at "$path" package.use.stable "$cpv"
+			fi
+			package_use_rules_at "$path" package.use "$cpv"
+			package_is_stable "$cpv" && use_tokens_at "$path" use.stable
 		fi
-		package_use_rules_at "$path" package.use "$cpv"
-		package_is_stable "$cpv" && use_tokens_at "$path" use.stable
+		# The global make.defaults part is emitted with or without a
+		# candidate: package_use_filter asks dbuse with no cpv for the
+		# baseline USE a package.use flag would have to differ from, and
+		# conf_usecomponent deliberately leaves profile-explained flags to
+		# this component. Bailing out on an empty cpv dropped them from that
+		# baseline entirely and made settled flags look load-bearing.
 		make_defaults_use "$path/make.defaults"
 	done <<<"$profile_stack"
+	return 0
 }
 
 function repo_usecomponent() {
@@ -1907,12 +2325,16 @@ function repo_usecomponent() {
 # Repeated package.use filtering revisits the same CPVs across several rule
 # classes. These inputs are immutable for one dep invocation, so cache them.
 memoise_predicate package_is_stable
-memoise package_use_rules
+memoise conf_usecomponent
+memoise profile_global_defaults_use
+memoise profile_use_restriction
+memoise repo_use_restriction
 memoise package_use_mask
 memoise package_use_force
 memoise repo_usecomponent
 memoise slot_for
 memoise repo_for_cpv
+memoise candidate_iuse_raw
 memoise candidate_iuse
 memoise candidate_use
 
@@ -1921,6 +2343,7 @@ function user_package_usecomponent() {
 	local cpv=$1 package flags file tree
 	local rule_files=()
 	[[ "$cpv" ]] || return 0
+	[[ "${__skip_user_package_use:-}" ]] && return 0
 	while IFS= read -r file; do
 		[[ "$file" ]] && rule_files+=("$file")
 	done < <(etc_portage_files package.use)
@@ -1941,9 +2364,9 @@ function usecomponent() {
 	# See http://bugs.gentoo.org/show_bug.cgi?id=61732
 	local component="$1" cpv="$2"
 	case "$component" in
-		env) split_use_tokens <<<"$USE" | tac;;
+		env) split_use_tokens <<<"$__env_USE" | tac;;
 		pkg) user_package_usecomponent "$cpv";;
-		conf) split_use_tokens <<<"$__conf_USE" | tac;;
+		conf) conf_usecomponent; use_expand_usecomponent "$cpv";;
 		# config.py maps active-profile make.defaults and package.use rules
 		# to "defaults"; "repo" is reserved for repository-wide rules.
 		# Keep pkgprofile as a legacy alias for profile package.use only.
@@ -1977,30 +2400,37 @@ function usecomponent() {
 	esac
 }
 
-# dbuse: echo effective USE flags for cpv $1: walks USE_ORDER components, applies package.use.mask, expands USE_EXPAND; short-circuits to verbatim VARDB_DIR/$cpv/USE when --original-depends and the vardb dir exists.
+# dbuse: echo effective USE flags for cpv $1: walks USE_ORDER components (the conf component carries the USE_EXPAND groups), applies use.force then use.mask; short-circuits to verbatim VARDB_DIR/$cpv/USE when --original-depends and the vardb dir exists, except for a baseline request.
 function dbuse() {
 	local cpv=$1
-	if [[ "$cpv" && "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
+	# Second argument: resolve as if /etc/portage/package.use said nothing
+	# about this package. It is a real argument rather than a global so that
+	# memoise() keys the two resolutions apart. usecomponent ignores anything
+	# past the cpv.
+	local __skip_user_package_use=${2-}
+	# --original-depends answers "what was this merged with", which the vardb
+	# records verbatim — but that record already includes whatever
+	# /etc/portage/package.use asked for, so it cannot answer "what would this
+	# resolve to without its own entry". A baseline request is always computed.
+	if [[ "$cpv" && -z "$__skip_user_package_use" \
+		&& "$opt_arg_original_depends" && -d ${VARDB_DIR}/$cpv ]]; then
 		sed -e 's/[[:space:]]\+/\n/g' ${VARDB_DIR}/$cpv/USE
 	else
 		[[ "$USE_ORDER" ]] || USE_ORDER="env:pkg:conf:defaults:pkginternal:features:repo:env.d"
 		(
-			echo $ARCH
+			# config.py assembles the USE_ORDER stack, adds ARCH, unions in
+			# use.force and only then subtracts use.mask, so the mask outranks
+			# both the forces and the arch flag. stacking_sort keeps the first
+			# entry it sees for a key, so emit them in that order.
 			package_use_mask "$cpv" | sed -e 's/^[-+]//' -e 's/^/-/'
 			package_use_force "$cpv"
+			echo $ARCH
 			for component in ${USE_ORDER//:/ }; do
 				usecomponent $component "$@"
 			done
 		) \
 		| sed '/^-\*$/,$d' \
 		| stacking_sort yes
-		for x in $USE_EXPAND; do
-			xl=$(lower "$x")
-			# would need grab_setting "$x", but is done above
-			for y in ${!x}; do
-				echo "${xl}_$y"
-			done
-		done
 	fi
 }
 memoise dbuse
@@ -4596,7 +5026,13 @@ function package_star_filter() {
 function package_use_filter() {
 	local depatom="$1" cp="$2" mlsr="$3" flags=("${@:4}")
 
-	alluse=$(dbuse)
+	# The baseline a flag has to differ from is what this package would resolve
+	# to without its /etc/portage/package.use entry — not the global USE set.
+	# Comparing against the global set ignored every per-package profile rule,
+	# IUSE default and mask, so it called flags that were doing work redundant
+	# (app-office/libreoffice qt6, app-crypt/johntheripper-jumbo openmp,
+	# media-libs/libheif gui) and -E would then delete them.
+	alluse=$(dbuse "$cp-$mlsr" baseline)
 	local newflags=()
 	for flag in "${flags[@]}"; do
 		if { [[ "$flag" == -* ]] && has "${flag#-}" $alluse; } \
