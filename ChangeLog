@@ -79,6 +79,10 @@
 	  mismatches, USE defaults and metadata lookups; isolate normal test loads
 	  from parser argv; and add focused regression coverage for every audited
 	  path above.
+	* fix: validate caller-supplied EROOT, EPREFIX and PORTAGE_CONFIGROOT before
+	  deriving anything from them. portageq composes EROOT out of ROOT and
+	  EPREFIX, so an explicit relative EPREFIX came back as a relative EROOT and
+	  was rejected under that name rather than its own.
 	* docs: align license metadata with the GPLv3-only source grant; correct the
 	  generated manual's action, world-path, and merge wording; document every
 	  verification tier; and keep generated roff warning-clean under mandoc.

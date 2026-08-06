@@ -72,6 +72,15 @@ ETC_PORTAGE_SETS_DIR="${ETC_PORTAGE_DIR}/sets"
 # === short-circuit so trivial 'dep --version' doesn't pay portageq's startup.
 # ============================================================================
 
+# reject_relative_root: 0 when root variable $1 holds absolute path $2 (or is
+# empty); otherwise diagnose and fail. Empty means "not set", which every
+# caller resolves to / later.
+function reject_relative_root() {
+	case "${2:-/}" in /*) return 0;; esac
+	format_error <<<"dep: $1 must be absolute: $2" >&2
+	return 1
+}
+
 # resolve_eroot_paths: probe portageq for EROOT/EPREFIX and rebind path constants for Prefix/chroot.
 function resolve_eroot_paths() {
 	# Fast path for the standard /-rooted layout — the defaults at the
@@ -80,6 +89,15 @@ function resolve_eroot_paths() {
 	local explicit_roots="${EROOT:+yes}${EPREFIX:+yes}${PORTAGE_CONFIGROOT:+yes}"
 	[[ -z "$explicit_roots" \
 		&& -d /var/db/pkg && ! "${PORTAGE_OVERRIDE_EPREFIX:-}" ]] && return
+	# Reject what the caller supplied before deriving anything from it.
+	# portageq composes EROOT out of ROOT and EPREFIX, so a relative EPREFIX
+	# comes back as a relative EROOT and the diagnostic below would name
+	# EROOT — a variable the caller never set. Only reachable when EPREFIX is
+	# exported into portageq's environment, which is why it shows up under
+	# `ebuild ... test` and not in an ordinary shell.
+	reject_relative_root EROOT "${EROOT-}" || return 1
+	reject_relative_root EPREFIX "${EPREFIX-}" || return 1
+	reject_relative_root PORTAGE_CONFIGROOT "${PORTAGE_CONFIGROOT-}" || return 1
 	if [[ -z "$explicit_roots" ]] && command -v portageq >/dev/null 2>&1; then
 		eval "$(portageq envvar -v EPREFIX EROOT 2>/dev/null)"
 	elif [[ -z "$EROOT" && "$EPREFIX" ]] \
@@ -88,15 +106,11 @@ function resolve_eroot_paths() {
 		# target root. Preserve it while asking Portage for the matching EROOT.
 		eval "$(portageq envvar -v EROOT 2>/dev/null)"
 	fi
-	case "${EROOT:-/}" in /*) ;; *)
-		format_error <<<"dep: EROOT must be absolute: $EROOT" >&2; return 1;;
-	esac
-	case "${EPREFIX:-/}" in /*) ;; *)
-		format_error <<<"dep: EPREFIX must be absolute: $EPREFIX" >&2; return 1;;
-	esac
-	case "${PORTAGE_CONFIGROOT:-/}" in /*) ;; *)
-		format_error <<<"dep: PORTAGE_CONFIGROOT must be absolute: $PORTAGE_CONFIGROOT" >&2; return 1;;
-	esac
+	# Again after the round-trip: a malformed make.conf can hand back a
+	# relative root of Portage's own making.
+	reject_relative_root EROOT "${EROOT-}" || return 1
+	reject_relative_root EPREFIX "${EPREFIX-}" || return 1
+	reject_relative_root PORTAGE_CONFIGROOT "${PORTAGE_CONFIGROOT-}" || return 1
 	EPREFIX="${EPREFIX:-}"; EPREFIX="${EPREFIX%/}"
 	EROOT="${EROOT:-/}";   EROOT="${EROOT%/}"
 	PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT:-}"; PORTAGE_CONFIGROOT="${PORTAGE_CONFIGROOT%/}"

@@ -65,3 +65,20 @@ setup() {
 		assert_output --partial "$variable must be absolute"
 	done
 }
+
+@test "a relative EPREFIX is rejected as EPREFIX, not as a derived EROOT" {
+	# portageq composes EROOT from ROOT and EPREFIX, so asking it for the
+	# matching EROOT before validating the caller's own value turns a bad
+	# EPREFIX into an EROOT diagnostic naming a variable nobody set. Only
+	# reachable when EPREFIX is exported, so the stub stands in for that:
+	# it returns what real portageq returns for a relative EPREFIX.
+	portageq() { printf "EROOT='relative/root/'\n"; }
+	EROOT=''
+	EPREFIX='relative/root'
+	PORTAGE_CONFIGROOT=''
+
+	run resolve_eroot_paths
+	assert_failure
+	assert_output --partial 'EPREFIX must be absolute: relative/root'
+	refute_output --partial 'EROOT must be absolute'
+}
