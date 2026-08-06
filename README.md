@@ -184,7 +184,18 @@ replacement is same-directory and atomic, preserves metadata and valid
 in-root symlinks, and rejects dangling or out-of-root symlinks. A Python
 Portage differential suite is test-only: the Bash runtime remains
 self-contained, while CI checks hundreds of real atom/candidate decisions
-against Portage itself. AI-assist disclosure as for 0.7.1.
+against Portage itself.
+
+The 0.8.0 work used Claude (Anthropic) as a coding assistant on the same
+review-by-hand basis as earlier releases, but at a considerably larger
+scale: the audit that found these bugs, the fixes for them, and the
+differential test rig were all produced that way. Hand review scales
+poorly at that volume, so the gates were deliberately made independent of
+the assistant — `make check-oracle` decides thousands of real atom,
+USE-dependency and REQUIRED_USE cases against Python Portage rather than
+against a written-down expectation, and the effective-USE rewrite was
+accepted only once it matched Portage flag for flag across a 530-package
+sample of an installed set.
 
 ## Other known repositories
 
