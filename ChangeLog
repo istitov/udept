@@ -83,6 +83,9 @@
 	  deriving anything from them. portageq composes EROOT out of ROOT and
 	  EPREFIX, so an explicit relative EPREFIX came back as a relative EROOT and
 	  was rejected under that name rather than its own.
+	* tests: make the unit suite independent of the ambient environment so it
+	  passes unchanged under `ebuild ... test`, where Portage exports FEATURES
+	  and EPREFIX into the phase.
 	* docs: align license metadata with the GPLv3-only source grant; correct the
 	  generated manual's action, world-path, and merge wording; document every
 	  verification tier; and keep generated roff warning-clean under mandoc.

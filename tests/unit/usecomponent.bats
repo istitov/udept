@@ -358,6 +358,10 @@ EOF
 	USE_ORDER='features'
 	ARCH=
 	USE_EXPAND=
+	# The features component turns FEATURES=test into USE=test, so an ambient
+	# FEATURES leaks a flag into the result. Portage exports FEATURES during
+	# src_test, which is exactly where this suite runs under `ebuild ... test`.
+	FEATURES=
 	package_use_mask() { printf '%s\n' gpm; }
 	package_use_force() { printf '%s\n' gpm; }
 
